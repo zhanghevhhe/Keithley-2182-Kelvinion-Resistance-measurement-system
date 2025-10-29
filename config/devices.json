@@ -1,0 +1,5 @@
+{
+  "kelvinion": "ASRL3::INSTR",
+  "k6221": "GPIB0::12::INSTR",
+  "matrix": "GPIB0::16::INSTR"
+} 

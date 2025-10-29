@@ -1,0 +1,54 @@
+{
+    "CH1": {
+        "color": "#E6194B",
+        "current": "1e-4",
+        "enabled": true,
+        "last_resistance": "--",
+        "pins": [
+            1,
+            2,
+            3,
+            4
+        ],
+        "voltage_range": "10mV"
+    },
+    "CH2": {
+        "color": "#3CB44B",
+        "current": "1e-6",
+        "enabled": false,
+        "last_resistance": "--",
+        "pins": [
+            5,
+            6,
+            7,
+            8
+        ],
+        "voltage_range": "100mV"
+    },
+    "CH3": {
+        "color": "#4363D8",
+        "current": "1e-6",
+        "enabled": false,
+        "last_resistance": "--",
+        "pins": [
+            9,
+            10,
+            11,
+            12
+        ],
+        "voltage_range": "100mV"
+    },
+    "CH4": {
+        "color": "#F58231",
+        "current": "1e-6",
+        "enabled": false,
+        "last_resistance": "--",
+        "pins": [
+            13,
+            14,
+            15,
+            16
+        ],
+        "voltage_range": "100mV"
+    }
+}
