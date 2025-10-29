@@ -1,52 +1,207 @@
 {
-  "sample_pid": [
-    { "min": 0, "max": 3, "P": 150, "I": 1 },
-    { "min": 3, "max": 5, "P": 150, "I": 1 },
-    { "min": 5, "max": 11, "P": 150, "I": 1 },
-    { "min": 11, "max": 21, "P": 150, "I": 1 },
-    { "min": 21, "max": 31, "P": 150, "I": 1 },
-    { "min": 31, "max": 51, "P": 150, "I": 1 },
-    { "min": 51, "max": 101, "P": 150, "I": 1 },
-    { "min": 101, "max": 311, "P": 150, "I": 1 }
-  ],
-  "chamber_pid": [
-    { "min": 0, "max": 3, "P": 30, "I": 1 },
-    { "min": 3, "max": 5, "P": 30, "I": 1 },
-    { "min": 5, "max": 11, "P": 30, "I": 1 },
-    { "min": 11, "max": 21, "P": 30, "I": 1 },
-    { "min": 21, "max": 31, "P": 30, "I": 1 },
-    { "min": 31, "max": 51, "P": 30, "I": 1 },
-    { "min": 51, "max": 101, "P": 30, "I": 1 },
-    { "min": 101, "max": 311, "P": 30, "I": 1 }
-  ],
-  "tolerance_ranges": [
-    { "min": 0, "max": 50, "tolerance": 0.05 },
-    { "min": 50, "max": 300, "tolerance": 0.08 },
-    { "min": 300, "max": 1000, "tolerance": 0.1 }
-  ],
-  "sample_ramp": [
-    {"min": 0, "max": 20, "ramp": 4},
-    {"min": 20, "max": 50, "ramp": 4},
-    {"min": 50, "max": 300, "ramp": 4},
-    {"min": 300, "max": 400, "ramp": 4}
-  ],
-  "chamber_ramp": [
-    {"min": 0, "max": 20, "ramp": 4},
-    {"min": 20, "max": 50, "ramp": 4},
-    {"min": 50, "max": 300, "ramp": 4},
-    {"min": 300, "max": 400, "ramp": 4}
-  ],
-  "sample_range": [
-    {"min": 0, "max": 20, "range": "HIGH"},
-    {"min": 20, "max": 50, "range": "HIGH"},
-    {"min": 50, "max": 300, "range": "HIGH"},
-    {"min": 300, "max": 400, "range": "HIGH"}
-  ],
-  "chamber_range": [
-    {"min": 0, "max": 20, "range": "MED"},
-    {"min": 20, "max": 50, "range": "HIGH"},
-    {"min": 50, "max": 300, "range": "HIGH"},
-    {"min": 300, "max": 400, "range": "HIGH"}
-  ]
-
-} 
+    "sample_pid": [
+        {
+            "min": 0,
+            "max": 3,
+            "P": 150,
+            "I": 5
+        },
+        {
+            "min": 3,
+            "max": 5,
+            "P": 150,
+            "I": 5
+        },
+        {
+            "min": 5,
+            "max": 11,
+            "P": 150,
+            "I": 10
+        },
+        {
+            "min": 11,
+            "max": 21,
+            "P": 150,
+            "I": 15
+        },
+        {
+            "min": 21,
+            "max": 31,
+            "P": 150,
+            "I": 15
+        },
+        {
+            "min": 31,
+            "max": 51,
+            "P": 150,
+            "I": 20
+        },
+        {
+            "min": 51,
+            "max": 101,
+            "P": 150,
+            "I": 20
+        },
+        {
+            "min": 101,
+            "max": 311,
+            "P": 150,
+            "I": 30
+        }
+    ],
+    "chamber_pid": [
+        {
+            "min": 0,
+            "max": 3,
+            "P": 30,
+            "I": 1
+        },
+        {
+            "min": 3,
+            "max": 5,
+            "P": 30,
+            "I": 2
+        },
+        {
+            "min": 5,
+            "max": 11,
+            "P": 30,
+            "I": 2
+        },
+        {
+            "min": 11,
+            "max": 21,
+            "P": 30,
+            "I": 2
+        },
+        {
+            "min": 21,
+            "max": 31,
+            "P": 30,
+            "I": 2
+        },
+        {
+            "min": 31,
+            "max": 51,
+            "P": 40,
+            "I": 2
+        },
+        {
+            "min": 51,
+            "max": 101,
+            "P": 50,
+            "I": 5
+        },
+        {
+            "min": 101,
+            "max": 311,
+            "P": 50,
+            "I": 10
+        }
+    ],
+    "tolerance_ranges": [
+        {
+            "min": 0,
+            "max": 50,
+            "tolerance": 0.05
+        },
+        {
+            "min": 50,
+            "max": 300,
+            "tolerance": 0.08
+        },
+        {
+            "min": 300,
+            "max": 1000,
+            "tolerance": 0.1
+        }
+    ],
+    "sample_ramp": [
+        {
+            "min": 0,
+            "max": 20,
+            "ramp": 4
+        },
+        {
+            "min": 20,
+            "max": 50,
+            "ramp": 4
+        },
+        {
+            "min": 50,
+            "max": 300,
+            "ramp": 4
+        },
+        {
+            "min": 300,
+            "max": 400,
+            "ramp": 4
+        }
+    ],
+    "chamber_ramp": [
+        {
+            "min": 0,
+            "max": 20,
+            "ramp": 4
+        },
+        {
+            "min": 20,
+            "max": 50,
+            "ramp": 4
+        },
+        {
+            "min": 50,
+            "max": 300,
+            "ramp": 4
+        },
+        {
+            "min": 300,
+            "max": 400,
+            "ramp": 4
+        }
+    ],
+    "sample_range": [
+        {
+            "min": 0,
+            "max": 20,
+            "range": "HIGH"
+        },
+        {
+            "min": 20,
+            "max": 50,
+            "range": "HIGH"
+        },
+        {
+            "min": 50,
+            "max": 300,
+            "range": "HIGH"
+        },
+        {
+            "min": 300,
+            "max": 400,
+            "range": "HIGH"
+        }
+    ],
+    "chamber_range": [
+        {
+            "min": 0,
+            "max": 20,
+            "range": "MED"
+        },
+        {
+            "min": 20,
+            "max": 50,
+            "range": "HIGH"
+        },
+        {
+            "min": 50,
+            "max": 300,
+            "range": "HIGH"
+        },
+        {
+            "min": 300,
+            "max": 400,
+            "range": "HIGH"
+        }
+    ]
+}

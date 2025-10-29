@@ -1,14 +1,14 @@
 {
     "CH1": {
         "color": "#E6194B",
-        "current": "1e-4",
+        "current": "1e-5",
         "enabled": true,
         "last_resistance": "--",
         "pins": [
             1,
             2,
-            3,
-            4
+            4,
+            3
         ],
         "voltage_range": "10mV"
     },
