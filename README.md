@@ -16,9 +16,10 @@
 ## Channel control
 1. Connect keithley 3706A to GPIB-USB-HS with GPIB cable.
 2. Insert the 3730 matrix card into any slot.
-3. 3706A has 6 rows and 16 columns. Could cover four channels in resistance measurements, and four electrode for each channel.
+3. 3730 S-T has 6 rows and 16 columns. Could cover four channels in resistance measurements, and four electrode for each channel.
 4. Select 4 rows to connect with Resistance measure 6221 and 2182. 6221 gives out current and 2182 detected the voltage.
-5. Connect 16 columns to sample (4 sample)
+6. Connect 16 columns to sample (4 sample channels)
+7. Plug the 3730 S-T on the 3730 matrix card.
 
 ## Kelvinion
 1. Connect Kelvinion from the Serial port with computer.
