@@ -34,6 +34,15 @@
 
 ## Content details
 Manage the instruments by pyvisa package, with each self use instrument class.
+Some basic command are written, for example, the temperature read and temperature set of different channels of Kelvinion, the delta mode measurement by 6221 and 2182, as well as the specific pin connecting by 3706.
+
+
+## 3706 setting
+because I insert the 3730 matrix card into the 4th slot in the 3706, so the close_command starts with 4, like 4110 means: the 4th slot, connect 1 row with 10 column. If you put 3730 into other slots, remember to change that value.
+
+the pins writes in the I+ V+ V- I- sequence, for example, pins=[13,14,15,16] means the current is generated on 13 and 16, the volaged is detected on 14 and 15. So make sure the software setting wiring in 3730 S-T. 
+
+The resistance would be measured in delta mode and shown in terminal.
 
 
 # Program testing
