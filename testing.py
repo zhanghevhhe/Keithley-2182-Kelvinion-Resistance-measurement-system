@@ -29,12 +29,12 @@ class KelvinionController:
         
         #self.inst.write("*RST") 
         print(self.inst.query('*IDN?'))
-        self.inst.write("[SET:ZONE:A:OFF]")#关闭自带的zone模式，使用程序自动确定设置温度点的PID和RAMP速率
-        self.inst.write("[SET:ZONE:B:OFF]")
-        self.inst.write("[SET:LOOP:A:F]") #SET:LOOP:CH:VALUE CH=A/B;VALUE=A-H
-        self.inst.write("[SET:LOOP:B:D]") #设置LOOP A\B分别对应温度计A\B通道
-        self.inst.write('[SET:LIMIT:A:325]')
-        self.inst.write('[SET:LIMIT:B:325]')
+        # self.inst.write("[SET:ZONE:A:OFF]")#关闭自带的zone模式，使用程序自动确定设置温度点的PID和RAMP速率
+        # self.inst.write("[SET:ZONE:B:OFF]")
+        # self.inst.write("[SET:LOOP:A:F]") #SET:LOOP:CH:VALUE CH=A/B;VALUE=A-H
+        # self.inst.write("[SET:LOOP:B:D]") #设置LOOP A\B分别对应温度计A\B通道
+        # self.inst.write('[SET:LIMIT:A:325]')
+        # self.inst.write('[SET:LIMIT:B:325]')
 
     def set_enable(self, loop: str = 'A', enable: bool = True):
         state = 'HIGH' if enable else 'OFF'
@@ -104,7 +104,7 @@ class KelvinionController:
             if entry["min"] <= target <= entry["max"]:
                 return entry["tolerance"]
         return 0.1  # fallback
-
+    '''
     def wait_for_stable(self, target: float, loop: str = 'A', channel: str = 'F'):#loop:A\B, channel:A-H.默认loopA-CHF,loopB-CHD
         tol = self._tolerance(target)
         print(f"[Kelvinion] Waiting for temperature to reach {target:.2f} K (±{tol} K)...")
@@ -136,7 +136,8 @@ class KelvinionController:
             print(f"[Kelvinion] Temperature stabilized for {loop}.")
         else:
             raise TimeoutError(f"[Kelvinion] Temperature failed to stabilize for {loop}")
-
+'''
+    '''
     def output(self, loop: str = 'A', state = 'on'):
         # 简洁判断
         if str(state).lower() in ['on', 'true', '1'] or state is True:
@@ -147,7 +148,7 @@ class KelvinionController:
             raise ValueError(f"Unknown state: {state}")
         self.inst.write(f"[SET:RANGE:{loop}:{state_cmd}]")
         print(f"[Kelvinion] Set loop {loop} output: {state}")
-
+'''
 
 
 
@@ -159,9 +160,9 @@ if __name__ == "__main__":
 
     matrix = SwitchMatrix3706(rm.open_resource(devices["matrix"]))
 
-    # kelvinion = KelvinionController(rm.open_resource(devices["kelvinion"]))
+    kelvinion = KelvinionController(rm.open_resource(devices["kelvinion"]))
 
-    # kelvinion.set_temperature(291,'A')
+    kelvinion.set_temperature(291,'A')
     # kelvinion.set_enable('A',False)
 
     pins=[1, 2, 3, 4]  # 示例引脚
