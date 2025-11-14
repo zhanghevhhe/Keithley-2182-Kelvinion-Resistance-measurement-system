@@ -15,6 +15,11 @@ from PyQt5.QtWidgets import QFileDialog, QMessageBox, QDialog
 # =============================================================================
 # Measurement Worker Thread (Moved from gui.py)
 # =============================================================================
+def lowerT(temp_a):
+    """根据回路 A 的温度计算回路 B 的目标温度（降低约10K，但不低于2K）。"""
+    lowered = temp_a - 10
+    return lowered if lowered > 2 else temp_a
+
 class MeasurementWorker(QObject):
     """
     在后台线程中执行测量序列的工人对象。
@@ -104,7 +109,7 @@ class MeasurementWorker(QObject):
                 
                 if self.msys.kelvinion:
                     self.msys.kelvinion.set_temperature(temp_point,'A')
-                    self.msys.kelvinion.set_temperature(temp_point*0.968,'B')
+                    self.msys.kelvinion.set_temperature(lowerT(temp_point),'B')
                     self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Waiting for temperature to stabilize at {temp_point:.2f} K...")
                     self.msys.kelvinion.wait_for_stable(temp_point, is_running_checker=lambda: self._is_running)
 
@@ -113,13 +118,56 @@ class MeasurementWorker(QObject):
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Measuring at {temp_point:.2f} K...")
 
                 resistances = {}
+                # 采集一份已启用通道的参数快照，避免在测量过程中被 UI 或其它线程修改
                 enabled_channels = [item for item in self.msys.channels.items() if item[1].get('enabled', False)]
+                snapshot = []
                 for ch_name, ch_config in enabled_channels:
+                    try:
+                        pins = list(ch_config.get('pins', [])) if ch_config.get('pins') is not None else []
+                    except Exception:
+                        pins = []
+                    try:
+                        current_val = float(ch_config.get('current', 1e-6))
+                    except Exception:
+                        current_val = 1e-6
+                    vrange = ch_config.get('voltage_range', '1V')
+                    snapshot.append((ch_name, pins, current_val, vrange))
+
+                # 顺序测量快照中的每个通道，调用测量前清空矩阵并给予短暂稳定时间
+                for ch_name, pins, current_val, vrange in snapshot:
                     if not self._is_running: break
-                    
                     self.progress.emit(f"Measuring channel: {ch_name}")
-                    res = self.msys.measure_single_channel(ch_name, ch_config)
+                    # 在调用下层测量前尝试断开矩阵的所有连接，避免残留影响
+                    try:
+                        if getattr(self.msys, 'matrix', None) is not None:
+                            try:
+                                self.msys.matrix.open_all()
+                            except Exception as e:
+                                print(f"[Controller] Warning: matrix.open_all() failed before measuring {ch_name}: {e}")
+                            # 短等待让矩阵物理动作完成
+                            time.sleep(0.08)
+                    except Exception:
+                        pass
+
+                    channel_config = {
+                        'pins': pins,
+                        'current': current_val,
+                        'voltage_range': vrange
+                    }
+
+                    # 调用 model 的测量接口（保持 model/driver 不变）
+                    try:
+                        res = self.msys.measure_single_channel(ch_name, channel_config)
+                    except Exception as e:
+                        print(f"[Controller] Measurement error for {ch_name}: {e}")
+                        res = float('nan')
                     resistances[ch_name] = res
+
+                    # 在通道间添加保守延迟，避免读出上一个通道的数据
+                    try:
+                        time.sleep(0.6)
+                    except Exception:
+                        pass
                 
                 if not self._is_running: break
                 
@@ -441,7 +489,7 @@ class AppController(QObject):
         try:
             if getattr(model, "kelvinion", None):
                 model.kelvinion.set_temperature(temp, loop='A', ramp_override=ramp)
-                model.kelvinion.set_temperature(temp*0.968, loop='B', ramp_override=None)
+                model.kelvinion.set_temperature(lowerT(temp), loop='B', ramp_override=None)
                 try:
                     model.sample_temp_changed.emit(temp)
                     model.chamber_temp_changed.emit(temp + 0.5)
@@ -472,7 +520,7 @@ class AppController(QObject):
 
         kelvin = getattr(model, 'kelvinion', None)
         if kelvin is None:
-            QMessageBox.warning(view, "Apply PIDRAMP", "Kelvinion instrument not initialized (simulation mode?).")
+            QMessageBox.warning(view, "Apply PIDRAMP", "Kelvinion instrument not initialized.")
             return
 
         def _parse_view_temp():
@@ -501,7 +549,7 @@ class AppController(QObject):
                 target_b = kelvin.get_set_temperature('B')
             except Exception:
                 try:
-                    target_b = target_a * 0.968
+                    target_b = lowerT(target_a)
                 except Exception:
                     target_b = None
         else:
@@ -519,6 +567,8 @@ class AppController(QObject):
                 view.update_progress(f"Applying sample ramp/PID for target {target_a:.2f} K...")
                 kelvin.set_sample_ramp(target_a)
                 kelvin.set_sample_pid(target_a)
+                kelvin.set_sample_range(target_a)
+
             else:
                 view.update_progress("Skipping sample ramp/PID: no valid sample target found.")
 
@@ -526,6 +576,7 @@ class AppController(QObject):
                 view.update_progress(f"Applying chamber ramp/PID for target {target_b:.2f} K...")
                 kelvin.set_chamber_ramp(target_b)
                 kelvin.set_chamber_pid(target_b)
+                kelvin.set_chamber_range(target_b)
             else:
                 view.update_progress("Skipping chamber ramp/PID: no valid chamber target found.")
 

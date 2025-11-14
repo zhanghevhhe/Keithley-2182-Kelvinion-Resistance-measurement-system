@@ -6,6 +6,7 @@ channel_config_dialog.py: Defines the ChannelConfigDialog for configuring measur
 """
 import json
 import threading
+import time
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QGridLayout, QLabel, QCheckBox, QComboBox, QLineEdit, QPushButton
 from PyQt5.QtCore import pyqtSignal, Qt, QTimer
 
@@ -90,9 +91,9 @@ class ChannelConfigDialog(QDialog):
                 volt_cb.setEnabled(False)
             self.apply_btn.setEnabled(False)
 
-        # 定时器用于周期性触发测量（8s）
+    # 定时器用于周期性触发测量（8s）
         self._timer = QTimer(self)
-        self._timer.setInterval(8000)
+        self._timer.setInterval(12000)
         self._timer.timeout.connect(self._on_timer_tick)
 
         # 信号连接：从工作线程更新 UI
@@ -104,6 +105,10 @@ class ChannelConfigDialog(QDialog):
 
         # 存储活跃线程引用以便管理（非必须）
         self._worker_threads = []
+        # 停止标志，用于在关闭时阻止新测量线程启动
+        self._stopping = False
+        # 测量正在进行标志：确保一次只运行一个顺序测量线程
+        self._measuring = False
 
     def load_channels(self):
         try:
@@ -120,59 +125,88 @@ class ChannelConfigDialog(QDialog):
 
     def _on_enable_changed(self, ch_name, state):
         # 如果被勾选，立即触发一次测量
+        if self._stopping:
+            return
+        # 当任一通道被启用时，调度一次对所有已启用通道的顺序测量
         if state:
-            self._start_measure_thread(ch_name)
+            self._schedule_measure_all()
 
     def _on_timer_tick(self):
         # 为所有已启用的通道启动异步测量线程
-        for ch_name, widgets in self.channel_rows.items():
-            enable_cb, _, _, _ = widgets
-            if enable_cb.isChecked():
-                self._start_measure_thread(ch_name)
+        if self._stopping:
+            return
+        # 周期性地顺序测量所有启用通道（避免并发对仪器的交叉访问）
+        self._schedule_measure_all()
 
-    def _start_measure_thread(self, ch_name):
-        # 避免过多并发：允许短暂并发但不保存线程引用过多
-        t = threading.Thread(target=self._measure_and_emit, args=(ch_name,), daemon=True)
+    def _schedule_measure_all(self):
+        """
+        启动一个后台线程，对所有已启用通道按顺序进行测量并依次更新 UI。
+        这样可以保证在通道之间有短暂延迟，避免读取到上一通道的残留数据。
+        """
+        if self._stopping or self._measuring:
+            return
+        t = threading.Thread(target=self._measure_all_and_emit, daemon=True)
         t.start()
         self._worker_threads.append(t)
         # 清理已结束线程引用
         self._worker_threads = [thr for thr in self._worker_threads if thr.is_alive()]
 
-    def _measure_and_emit(self, ch_name):
+    def _measure_all_and_emit(self):
+        # 标记正在测量，确保不会并发启动多个测量线程
+        self._measuring = True
         try:
-            # 构造 channel_config 与 MeasurementSystem.measure_single_channel 所需字段
-            enable_cb, pin_cbs, current_edit, volt_cb = self.channel_rows[ch_name]
-            try:
-                pins = [int(cb.currentText()) for cb in pin_cbs]
-            except Exception:
-                pins = []
-            current_text = current_edit.text().strip()
-            try:
-                current_val = float(current_text)
-            except Exception:
-                current_val = float(current_text) if current_text else 1e-6
+            channel_order = ["CH1", "CH2", "CH3", "CH4"]
+            for ch_name in channel_order:
+                if self._stopping:
+                    break
+                widgets = self.channel_rows.get(ch_name)
+                if not widgets:
+                    continue
+                enable_cb, pin_cbs, current_edit, volt_cb = widgets
+                if not enable_cb.isChecked():
+                    continue
 
-            channel_config = {
-                "pins": pins,
-                "current": current_val,
-                "voltage_range": volt_cb.currentText()
-            }
+                # 读取并解析参数
+                try:
+                    pins = [int(cb.currentText()) for cb in pin_cbs]
+                except Exception:
+                    pins = []
+                current_text = current_edit.text().strip()
+                try:
+                    current_val = float(current_text)
+                except Exception:
+                    try:
+                        current_val = float(current_text) if current_text else 1e-6
+                    except Exception:
+                        current_val = 1e-6
 
-            # 调用 MeasurementSystem 的接口（可能是模拟或真实测量）
-            result = float('nan')
-            try:
-                result = self.msys.measure_single_channel(ch_name, channel_config)
-            except Exception as e:
-                # 若测量抛异常，保留 NaN 并在控制台打印
-                print(f"[ChannelConfigDialog] Measurement error for {ch_name}: {e}")
+                channel_config = {
+                    "pins": pins,
+                    "current": current_val,
+                    "voltage_range": volt_cb.currentText()
+                }
 
-            # 发射信号回主线程更新 UI
-            try:
-                self.measurement_updated.emit(ch_name, result)
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"[ChannelConfigDialog] _measure_and_emit failed for {ch_name}: {e}")
+                # DEBUG: 输出将传递给测量层的实际参数，便于定位映射或延时问题
+                print(f"[ChannelConfigDialog] Starting sequential measurement for {ch_name} with pins={pins}, current={current_val}, voltage_range={channel_config['voltage_range']}")
+
+                result = float('nan')
+                try:
+                    result = self.msys.measure_single_channel(ch_name, channel_config)
+                except Exception as e:
+                    print(f"[ChannelConfigDialog] Measurement error for {ch_name}: {e}")
+
+                try:
+                    self.measurement_updated.emit(ch_name, result)
+                except Exception:
+                    pass
+
+                # 在通道间添加短暂延迟以确保仪器缓冲区/状态被清理
+                try:
+                    time.sleep(0.2)
+                except Exception:
+                    pass
+        finally:
+            self._measuring = False
 
     def _update_res_label(self, ch_name, value):
         lbl = self.res_labels.get(ch_name)
@@ -201,12 +235,30 @@ class ChannelConfigDialog(QDialog):
         with open(self.channels_file, 'w', encoding='utf-8') as f:
             json.dump(new_channels_data, f, indent=4)
         self.config_changed.emit(new_channels_data)
-        # 停止定时器并关闭
+        # 停止定时器并阻止新测量线程启动，然后等待现有线程结束后关闭对话框
         try:
-            self._timer.stop()
-        except Exception:
-            pass
-        self.accept()
+            # 1) 阻止进一步启动新线程
+            self._stopping = True
+            # 2) 停止定时器
+            try:
+                self._timer.stop()
+            except Exception:
+                pass
+            # 3) 断开 enable_cb 的 stateChanged 信号，避免外部回调触发
+            for ch_name, widgets in self.channel_rows.items():
+                enable_cb, _, _, _ = widgets
+                try:
+                    enable_cb.stateChanged.disconnect()
+                except Exception:
+                    pass
+            # 4) 等待活跃线程短暂结束（每个线程最多等待 2s）
+            for thr in list(self._worker_threads):
+                try:
+                    thr.join(timeout=2.0)
+                except Exception:
+                    pass
+        finally:
+            self.accept()
 
     def closeEvent(self, event):
         try:

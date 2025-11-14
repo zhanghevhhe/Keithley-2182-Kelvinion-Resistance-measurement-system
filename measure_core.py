@@ -346,8 +346,17 @@ class SwitchMatrix3706:
     def connect(self, pins):
         #示例：pins=[1, 2, 3, 4]
         self.open_all()
+        cmds = []
         for row, col in enumerate(pins, 1):
-            self.inst.write(f'channel.close("4{row}{col:02d}")')
+            chan_str = f'4{row}{col:02d}'
+            cmds.append(chan_str)
+        # DEBUG: 列出将要关闭的通道 id，便于排查映射问题
+        print(f"[3706] Connecting pins {pins} -> channels {cmds}")
+        for chan_str in cmds:
+            try:
+                self.inst.write(f'channel.close("{chan_str}")')
+            except Exception as e:
+                print(f"[3706] Error writing channel.close for {chan_str}: {e}")
 
 
 class MeasurementSystem(QObject):
@@ -511,48 +520,82 @@ class MeasurementSystem(QObject):
             self.current_temp_changed.emit(0.0)
 
     def measure_single_channel(self, ch_name, channel_config):
-
-
         # --- 使用你提供的 delta_measure 方法进行真实测量 ---
+        # 为避免多个并发测量导致仪器通信冲突和超时，使用系统级锁序列化对 matrix/k6221 的访问。
+        # 同时在 delta_measure 出现超时时进行有限次数的重试。
+        attempts = 3
+        backoff = 0.5
         try:
             current = float(channel_config['current'])
             Vrange = channel_config.get('voltage_range', '1V')
             pins = channel_config.get('pins', [])
-            
+
             if not pins:
                 print(f"Warning: No pins configured for channel {ch_name}. Skipping.")
                 return float('nan')
 
-            # 1. 使用 connect 方法连接指定通道
-            self.matrix.connect(pins)
-            print(f"Connected pins: {pins}")
-            
-            # 2. 调用 delta_measure 获取电压
-            voltage = self.k6221.delta_measure(current, Vrange)
-            print(f"Voltage and current: {voltage}, {current}")
-            # 3. 计算电阻
-            if abs(current) < 1e-15:
-                resistance = float('inf')
-            else:
-                resistance = voltage / current
-            
-            print(f"[System] Measured R = {resistance:.6e} Ohm for channel {ch_name} (V={voltage:.6e}, I={current:.2e})")
+            # 串行化整个测量过程，避免多个线程同时写入仪器导致超时
+            with self.lock:
+                # 1. 使用 connect 方法连接指定通道
+                try:
+                    self.matrix.connect(pins)
+                except Exception as e:
+                    print(f"[System] Error connecting matrix for {ch_name}: {e}")
+                    raise
 
-            return resistance
-        
+                # give the switch matrix a short settle time
+                time.sleep(0.1)
+
+                # 2. 重试 delta_measure 以应对偶发超时
+                last_exc = None
+                voltage = None
+                for attempt in range(1, attempts + 1):
+                    try:
+                        voltage = self.k6221.delta_measure(current, Vrange)
+                        last_exc = None
+                        break
+                    except Exception as e:
+                        last_exc = e
+                        msg = str(e)
+                        print(f"[System] delta_measure attempt {attempt} failed for {ch_name}: {msg}")
+                        # 在超时或通信错误时，尝试发送中止并稍后重试
+                        try:
+                            if self.k6221:
+                                self.k6221.inst.write('SOURCE:SWEEP:ABORT')
+                        except Exception:
+                            pass
+                        time.sleep(backoff * attempt)
+
+                if last_exc is not None and voltage is None:
+                    # 最后一次仍失败，抛出异常以便上层处理
+                    raise last_exc
+
+                # 3. 计算电阻
+                if abs(voltage) > 1e15:
+                    resistance = float('inf')
+                else:
+                    resistance = voltage / current
+
+                print(f"[System] Measured R = {resistance:.6e} Ohm for channel {ch_name} (V={voltage:.6e}, I={current:.2e})")
+
+                return resistance
+
         except Exception as e:
             error_msg = f"Measurement error on channel {ch_name}: {e}"
             print(f"FATAL ERROR during measurement of channel {ch_name}: {e}")
-            self.error_occurred.emit(error_msg)
+            try:
+                self.error_occurred.emit(error_msg)
+            except Exception:
+                pass
             # 如果delta_measure中途出错，尝试中止扫描
-            if self.k6221:
-                try:
+            try:
+                if self.k6221:
                     self.k6221.inst.write('SOURCE:SWEEP:ABORT')
                     print("[K6221] Sent ABORT command due to error.")
-                except Exception as abort_e:
-                    print(f"Error sending ABORT command: {abort_e}")
+            except Exception as abort_e:
+                print(f"Error sending ABORT command: {abort_e}")
             return float('nan')
-        
+
         finally:
             # 无论成功与否，最后都断开所有开关 (重要安全步骤)
             if self.matrix:

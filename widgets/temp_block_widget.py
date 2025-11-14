@@ -114,11 +114,13 @@ class TempBlockWidget(QFrame):
         - 已编辑: 浅绿色
         - 正在执行: 浅红色
         """
-        # 检查是否有非缺省值的输入
-        is_edited = all(
-            w.text().strip() and w.text() not in self.default_values.values() 
+        # 检查是否有任意非缺省值的输入或 End 被选中：
+        # 如果用户只修改了部分字段（例如只改了 start/stop/step，但保留 ramp 的默认值4），
+        # 也应被视为已编辑并显示浅绿色。
+        is_edited = any(
+            (w.text().strip() and w.text() not in self.default_values.values())
             for w in [self.start, self.stop, self.step, self.ramp]
-        )
+        ) or bool(self.end_checkbox.isChecked())
         
         executing_color = "#ffdddd"   # 浅红色 (运行状态下正在执行)
         edited_color = "#e6ffed"     # 浅绿色 (已编辑 或 运行中但非当前)

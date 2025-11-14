@@ -1,0 +1,2 @@
+Timestamp,Temperature[K],Resistance_CH1[Ohm],Resistance_CH2[Ohm],Resistance_CH3[Ohm],Resistance_CH4[Ohm]
+2025-11-03 11:33:00,2.978475e+02,1.030793e-02,XXXXXXE0,1.786304e+00,XXXXXXE0
