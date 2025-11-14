@@ -12,13 +12,12 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal, QThread
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QDialog
 
-# =============================================================================
-# Measurement Worker Thread (Moved from gui.py)
-# =============================================================================
+
 def lowerT(temp_a):
     """根据回路 A 的温度计算回路 B 的目标温度（降低约10K，但不低于2K）。"""
     lowered = temp_a - 10
     return lowered if lowered > 2 else temp_a
+
 
 class MeasurementWorker(QObject):
     """
@@ -33,8 +32,9 @@ class MeasurementWorker(QObject):
 
     def __init__(self, msys, sequence):
         """
-        msys: MeasurementSystem 实例（model）
-        sequence: 从 UI 获取的序列数据（列表）
+        Args:
+            msys: MeasurementSystem 实例（model）
+            sequence: 从 UI 获取的序列数据（列表）
         """
         super().__init__()
         self.msys = msys
@@ -62,10 +62,10 @@ class MeasurementWorker(QObject):
                 step = -abs(step_val)
             else:
                 step = abs(step_val)
-            
+
             points = np.arange(start_temp, stop_temp, step, dtype=float)
             temp_points.extend(points.tolist())
-            
+
             if not points.size or not np.isclose(points[-1], stop_temp):
                 if (step > 0 and stop_temp >= start_temp) or \
                    (step < 0 and stop_temp <= start_temp):
@@ -85,36 +85,39 @@ class MeasurementWorker(QObject):
     def run(self):
         """主测量循环。"""
         self.progress.emit("Measurement sequence started.")
-        
+
         target_temps = self._get_all_target_temps()
         print("--- Target Temperature Sequence ---")
         print(target_temps)
         print("---------------------------------")
-        
-        for i, block in enumerate(self.sequence):
-            if not self._is_running: break
 
-            self.block_changed.emit(i) # 发射当前块的索引
+        for i, block in enumerate(self.sequence):
+            if not self._is_running:
+                break
+
+            self.block_changed.emit(i)
             temp_points_in_block = self._generate_temps_for_block(block)
-            
+
             if not temp_points_in_block:
                 self.progress.emit(f"Block {i+1}: Invalid parameters or empty sequence. Skipping.")
                 continue
-            
+
             for temp_point in temp_points_in_block:
-                if not self._is_running: break
-                
+                if not self._is_running:
+                    break
+
                 self.update_set_temp.emit(temp_point)
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Setting temperature to {temp_point:.2f} K...")
-                
+
                 if self.msys.kelvinion:
-                    self.msys.kelvinion.set_temperature(temp_point,'A')
-                    self.msys.kelvinion.set_temperature(lowerT(temp_point),'B')
+                    self.msys.kelvinion.set_temperature(temp_point, 'A')
+                    self.msys.kelvinion.set_temperature(lowerT(temp_point), 'B')
                     self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Waiting for temperature to stabilize at {temp_point:.2f} K...")
                     self.msys.kelvinion.wait_for_stable(temp_point, is_running_checker=lambda: self._is_running)
 
-                if not self._is_running: break
-                
+                if not self._is_running:
+                    break
+
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Measuring at {temp_point:.2f} K...")
 
                 resistances = {}
@@ -133,10 +136,13 @@ class MeasurementWorker(QObject):
                     vrange = ch_config.get('voltage_range', '1V')
                     snapshot.append((ch_name, pins, current_val, vrange))
 
-                # 顺序测量快照中的每个通道，调用测量前清空矩阵并给予短暂稳定时间
+                # 顺序测量快照中的每个通道
                 for ch_name, pins, current_val, vrange in snapshot:
-                    if not self._is_running: break
+                    if not self._is_running:
+                        break
+
                     self.progress.emit(f"Measuring channel: {ch_name}")
+
                     # 在调用下层测量前尝试断开矩阵的所有连接，避免残留影响
                     try:
                         if getattr(self.msys, 'matrix', None) is not None:
@@ -144,7 +150,6 @@ class MeasurementWorker(QObject):
                                 self.msys.matrix.open_all()
                             except Exception as e:
                                 print(f"[Controller] Warning: matrix.open_all() failed before measuring {ch_name}: {e}")
-                            # 短等待让矩阵物理动作完成
                             time.sleep(0.08)
                     except Exception:
                         pass
@@ -155,7 +160,6 @@ class MeasurementWorker(QObject):
                         'voltage_range': vrange
                     }
 
-                    # 调用 model 的测量接口（保持 model/driver 不变）
                     try:
                         res = self.msys.measure_single_channel(ch_name, channel_config)
                     except Exception as e:
@@ -163,19 +167,20 @@ class MeasurementWorker(QObject):
                         res = float('nan')
                     resistances[ch_name] = res
 
-                    # 在通道间添加保守延迟，避免读出上一个通道的数据
+                    # 在通道间添加保守延迟
                     try:
                         time.sleep(0.6)
                     except Exception:
                         pass
-                
-                if not self._is_running: break
-                
+
+                if not self._is_running:
+                    break
+
                 temp = self.msys.get_sample_temperature()
-                
                 self.new_data.emit(temp, resistances)
 
-            if not self._is_running: break
+            if not self._is_running:
+                break
 
             if block.get('end', False):
                 self.progress.emit("End of sequence reached (END checkbox).")
@@ -185,27 +190,24 @@ class MeasurementWorker(QObject):
             self.progress.emit("Measurement sequence finished.")
         else:
             self.progress.emit("Measurement sequence stopped by user.")
-        
+
         self.finished.emit()
 
 
-# =============================================================================
-# Application Controller
-# =============================================================================
 class AppController(QObject):
     """
-    应用程序的“大脑”，处理所有业务逻辑和状态管理。
+    应用程序的"大脑"，处理所有业务逻辑和状态管理。
     连接View（GUI）和Model（MeasurementSystem）。
     """
     def __init__(self, model):
         super().__init__()
         self.model = model
         self.view = None
-        
+
         # --- State Management ---
         self.is_running = False
         self.is_manual_locked = False
-        
+
         # --- Thread Management ---
         self.measurement_thread = None
         self.measurement_worker = None
@@ -213,32 +215,30 @@ class AppController(QObject):
     def set_view(self, view):
         """将Controller与View关联起来。"""
         self.view = view
-        # 连接模型信号到视图槽
-        self.model.sample_temp_changed.connect(self.view.update_sample_temp_display)     # 样品温度
-        self.model.chamber_temp_changed.connect(self.view.update_chamber_temp_display)   # 样品腔温度
-        self.model.error_occurred.connect(self.view.show_error)                          # 错误信息
-        self.model.warning_occurred.connect(self.view.show_warning)                      # 警告信息
-        # 只保留view赋值，不做任何信号绑定
+        self.model.sample_temp_changed.connect(self.view.update_sample_temp_display)
+        self.model.chamber_temp_changed.connect(self.view.update_chamber_temp_display)
+        self.model.error_occurred.connect(self.view.show_error)
+        self.model.warning_occurred.connect(self.view.show_warning)
 
     def initialize_ui(self):
-        """[重构] 初始化UI状态，例如创建默认的温度块。"""
+        """初始化UI状态，创建默认的温度块。"""
         self.view.clear_all_temp_blocks()
 
     def add_temp_block(self):
-        """[重构] 命令View添加一个新的温度块。"""
+        """命令View添加一个新的温度块。"""
         self.view.add_temp_block()
 
     def clear_all_temp_blocks(self):
-        """[重构] 命令View清除所有温度块并重置。"""
+        """命令View清除所有温度块并重置。"""
         self.view.clear_all_temp_blocks()
 
     def _update_ui_lock_state(self):
-        """一个辅助方法，用于计算并更新UI的锁定状态。"""
+        """计算并更新UI的锁定状态。"""
         is_locked = self.is_running or self.is_manual_locked
         self.view.set_ui_locked(is_locked, self.is_running)
 
     # -------------------------------------------------------------------------
-    # 业务逻辑槽函数 (从MainWindow迁移而来)
+    # 业务逻辑方法
     # -------------------------------------------------------------------------
 
     def toggle_measurement(self):
@@ -248,7 +248,7 @@ class AppController(QObject):
         else:
             self._start_measurement()
         self._update_ui_lock_state()
-    
+
     def _start_measurement(self):
         """开始测量序列。"""
         sequence_data = self.view.get_sequence_data()
@@ -263,17 +263,17 @@ class AppController(QObject):
             QMessageBox.critical(self.view, "Error", "Please set a valid .txt file path.")
             self._update_ui_lock_state()
             return
-        
+
         # 只在文件不存在时写表头，存在就直接追加
         if not os.path.exists(file_path):
             self._write_header_to_file(file_path)
-        
+
         self.is_running = True
         self._update_ui_lock_state()
         self.view.update_running_status(True)
-        self.view.clear_plots() # 先无条件清空图表
-        self.view.update_plots_from_file(file_path) # 加载历史数据
-        self.view.clear_error() # 清除之前的错误信息
+        self.view.clear_plots()
+        self.view.update_plots_from_file(file_path)
+        self.view.clear_error()
 
         self.measurement_thread = QThread()
         self.measurement_worker = MeasurementWorker(self.model, sequence_data)
@@ -286,23 +286,20 @@ class AppController(QObject):
         self.measurement_worker.progress.connect(self.view.update_progress)
         self.measurement_worker.update_set_temp.connect(self.view.update_set_temp_display)
         self.measurement_worker.block_changed.connect(self.on_block_changed)
-        
+
         self.measurement_thread.start()
 
     def _stop_measurement(self):
         """停止测量序列。"""
-        # 请求 worker 停止（后台线程）
         if self.measurement_worker:
             try:
                 self.measurement_worker.stop()
             except Exception:
                 pass
 
-        # 立即更新控制器状态并刷新 UI 锁定，使界面可以响应停止请求
         self.is_running = False
         self._update_ui_lock_state()
 
-        # 尝试立即通知视图（view）停止状态，on_measurement_finished 之后会再次清理
         try:
             if self.view:
                 self.view.update_running_status(False)
@@ -314,7 +311,7 @@ class AppController(QObject):
         self.is_running = False
         self._update_ui_lock_state()
         self.view.update_running_status(False)
-        self.view.highlight_running_block(-1) # 清除高亮
+        self.view.highlight_running_block(-1)
 
         if self.measurement_thread:
             self.measurement_thread.quit()
@@ -327,7 +324,6 @@ class AppController(QObject):
         if not self.is_running:
             self.is_manual_locked = not self.is_manual_locked
             self._update_ui_lock_state()
-            # self.view.lock_btn.setChecked(self.is_manual_locked)  # 移除
 
     def on_block_changed(self, block_index):
         """处理当前执行块变化的信号。"""
@@ -335,21 +331,17 @@ class AppController(QObject):
 
     def handle_new_data(self, temp, resistances):
         """
-        [重构] 处理新数据：
+        处理新数据：
         1. 命令Model更新其内部状态。
         2. 命令View更新UI。
-        3. 命令自己将数据写入文件。
+        3. 将数据写入文件。
         """
         for ch_name, res_value in resistances.items():
             if res_value is not None:
-                # 1. 命令Model更新
                 self.model.update_last_resistance(ch_name, res_value)
-        
-        # 2. 命令View更新
+
         self.view.handle_new_data(temp, resistances)
-        self.view.update_plot_titles() # 更新标题
-        
-        # 3. 写入文件
+        self.view.update_plot_titles()
         self._write_data_to_file(temp, resistances)
 
     def _write_data_to_file(self, temp, resistances):
@@ -359,7 +351,7 @@ class AppController(QObject):
             with open(path, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                
+
                 row_data = []
                 for ch in self.model.channels.keys():
                     res_value = resistances.get(ch)
@@ -367,7 +359,7 @@ class AppController(QObject):
                         row_data.append(f"{res_value:.6e}")
                     else:
                         row_data.append('XXXXXXE0')
-                
+
                 row = [timestamp, f"{temp:.6e}"] + row_data
                 writer.writerow(row)
         except Exception as e:
@@ -376,15 +368,17 @@ class AppController(QObject):
     def choose_path(self):
         """处理文件路径选择。"""
         current_path = self.view.get_save_path()
-        file_path, _ = QFileDialog.getSaveFileName(self.view, "Select Data Save File", current_path, "Text Files (*.txt);;All Files (*)")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.view, "Select Data Save File", current_path, "Text Files (*.txt);;All Files (*)"
+        )
 
         if not file_path:
             return
 
         self.view.set_save_path(file_path)
-        self.model.set_save_path(file_path) # 通知model更新路径
-        self.view.update_plots_from_file(file_path) # 立即显示历史数据
-    
+        self.model.set_save_path(file_path)
+        self.view.update_plots_from_file(file_path)
+
     def _write_header_to_file(self, file_path):
         """向指定文件写入表头。"""
         try:
@@ -396,11 +390,11 @@ class AppController(QObject):
             QMessageBox.critical(self.view, "File Write Error", f"Error writing header to file:\n{e}")
 
     def get_save_path(self):
-        """[重构] 为View提供获取初始保存路径的方法。"""
+        """为View提供获取初始保存路径的方法。"""
         return self.model.save_path
 
     def get_plot_titles(self):
-        """[重构] 从Model获取所有图表的标题信息。"""
+        """从Model获取所有图表的标题信息。"""
         titles = {}
         for ch_name in self.model.channels.keys():
             info = self.model.get_channel_info_for_display(ch_name)
@@ -408,29 +402,24 @@ class AppController(QObject):
         return titles
 
     def open_channel_config(self):
-        """
-        打开通道配置对话框。
-        """
+        """打开通道配置对话框。"""
         from gui import ChannelConfigDialog
-        # 传入msys实例, 并传递锁定状态
         is_locked = self.is_running or self.is_manual_locked
         dlg = ChannelConfigDialog(self.model, self.view, is_locked=is_locked)
         dlg.config_changed.connect(self.on_channel_config_changed)
         dlg.exec_()
-        
+
     def on_channel_config_changed(self, new_config):
         """处理来自ChannelConfigDialog的配置更改。"""
         self.model.update_channels(new_config)
         self.view.update_plot_titles()
 
     def choose_pidramp_file(self):
-        """打开 PIDRAMP 编辑器对话框，让用户在 UI 内修改配置并保存/载入。"""
+        """打开 PIDRAMP 编辑器对话框。"""
         try:
-            # 延迟导入对话框以避免循环导入问题
             from dialogs.pidramp_editor import PidRampEditorDialog
             dlg = PidRampEditorDialog(self.model, parent=self.view)
             if dlg.exec_() == QDialog.Accepted:
-                # 默认写入项目 config/PIDRAMP.json
                 base_dir = os.path.dirname(os.path.abspath(__file__))
                 cfg_path = os.path.join(base_dir, 'config', 'PIDRAMP.json')
                 self._pending_pidramp_path = cfg_path
@@ -442,20 +431,19 @@ class AppController(QObject):
             QMessageBox.critical(self.view, "Error", f"Failed to open PIDRAMP editor: {e}")
 
     def load_pidramp_file(self, path: str = None):
-        """载入指定或最近选择的 PIDRAMP 文件并应用到 model（以及已初始化的 Kelvinion 控制器）。
-
-        如果 path 为空，将尝试使用之前通过 choose_pidramp_file 选定的路径；如果仍无路径，会弹出选择对话框。
-        """
+        """载入指定或最近选择的 PIDRAMP 文件并应用到 model。"""
         try:
             selected = path or getattr(self, '_pending_pidramp_path', None)
             if not selected:
-                # 弹出对话框以选取
-                selected, _ = QFileDialog.getOpenFileName(self.view, "Select PIDRAMP JSON to Load", os.path.dirname(self.model.save_path) if self.model and self.model.save_path else os.getcwd(), "JSON Files (*.json);;All Files (*)")
+                selected, _ = QFileDialog.getOpenFileName(
+                    self.view,
+                    "Select PIDRAMP JSON to Load",
+                    os.path.dirname(self.model.save_path) if self.model and self.model.save_path else os.getcwd(),
+                    "JSON Files (*.json);;All Files (*)"
+                )
                 if not selected:
                     return
 
-            # 让 model 负责读取和校验
-            success = False
             try:
                 success = self.model.load_pidramp(selected)
             except Exception as e:
@@ -464,7 +452,6 @@ class AppController(QObject):
 
             if success:
                 QMessageBox.information(self.view, "PIDRAMP Loaded", f"PIDRAMP configuration loaded from:\n{selected}")
-                # 更新状态显示
                 try:
                     self.view.update_progress(f"PIDRAMP loaded: {os.path.basename(selected)}")
                 except Exception:
@@ -476,16 +463,15 @@ class AppController(QObject):
 
     def set_manual_temperature(self, temp: float, ramp: float = None):
         """
-        UI 调用此方法。将手动设定的 temp/ramp 应用到硬件：
+        设置手动温度。
         - 样品回路 A: 写入 setpoint 并写入 ramp（ramp=None 使用 pid 表）
-        - 腔体回路 B: 仅写入 setpoint（不传 ramp）
+        - 腔体回路 B: 仅写入 setpoint
         """
         model = getattr(self, "model", None)
         if model is None:
             print("[Controller] No model attached; cannot apply temperature.")
             return
 
-        # 退回到直接使用 kelvinion（若可用）
         try:
             if getattr(model, "kelvinion", None):
                 model.kelvinion.set_temperature(temp, loop='A', ramp_override=ramp)
@@ -505,13 +491,7 @@ class AppController(QObject):
                 pass
 
     def apply_pidramp_to_hardware(self):
-        """将当前 model.pidramp 应用到已连接的 Kelvinion 仪器（设置 ramp 与 PID）。
-
-        目标温度优先级：
-        1. UI 中的 Set Temp 文本框（`self.view.set_temp_edit`）
-        2. 如果没有，则读取 Kelvinion 的 setpoint（A/B）
-        3. 如果还没有，则使用当前测得温度（model.get_sample_temperature / get_chamber_temperature）
-        """
+        """将当前 model.pidramp 应用到已连接的 Kelvinion 仪器（设置 ramp 与 PID）。"""
         model = getattr(self, 'model', None)
         view = getattr(self, 'view', None)
         if model is None or view is None:
@@ -530,7 +510,7 @@ class AppController(QObject):
             except Exception:
                 return None
 
-        # determine target A (sample)
+        # 确定样品目标温度 (A)
         target_a = _parse_view_temp()
         if target_a is None:
             try:
@@ -541,10 +521,9 @@ class AppController(QObject):
                 except Exception:
                     target_a = None
 
-        # determine target B (chamber)
+        # 确定腔体目标温度 (B)
         target_b = None
         if target_a is not None:
-            # 常规使用样品目标的缩放值（与测序保持一致），但优先使用 B 的 set
             try:
                 target_b = kelvin.get_set_temperature('B')
             except Exception:
@@ -561,14 +540,13 @@ class AppController(QObject):
                 except Exception:
                     target_b = None
 
-        # Apply ramp and PID using existing KelvinionController helpers
+        # 应用 ramp 和 PID
         try:
             if target_a is not None:
                 view.update_progress(f"Applying sample ramp/PID for target {target_a:.2f} K...")
                 kelvin.set_sample_ramp(target_a)
                 kelvin.set_sample_pid(target_a)
                 kelvin.set_sample_range(target_a)
-
             else:
                 view.update_progress("Skipping sample ramp/PID: no valid sample target found.")
 
