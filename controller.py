@@ -15,8 +15,8 @@ from PyQt5.QtWidgets import QFileDialog, QMessageBox, QDialog
 
 def lowerT(temp_a):
     """根据回路 A 的温度计算回路 B 的目标温度（降低约10K，但不低于2K）。"""
-    lowered = temp_a - 10
-    return lowered if lowered > 2 else temp_a
+    lowered = temp_a * 0.968 -2
+    return lowered if lowered > 1 else 1
 
 
 class MeasurementWorker(QObject):
@@ -125,14 +125,9 @@ class MeasurementWorker(QObject):
                 enabled_channels = [item for item in self.msys.channels.items() if item[1].get('enabled', False)]
                 snapshot = []
                 for ch_name, ch_config in enabled_channels:
-                    try:
-                        pins = list(ch_config.get('pins', [])) if ch_config.get('pins') is not None else []
-                    except Exception:
-                        pins = []
-                    try:
-                        current_val = float(ch_config.get('current', 1e-6))
-                    except Exception:
-                        current_val = 1e-6
+
+                    pins = list(ch_config.get('pins', [])) if ch_config.get('pins') is not None else []
+                    current_val = float(ch_config.get('current', 1e-6))
                     vrange = ch_config.get('voltage_range', '1V')
                     snapshot.append((ch_name, pins, current_val, vrange))
 
@@ -142,17 +137,6 @@ class MeasurementWorker(QObject):
                         break
 
                     self.progress.emit(f"Measuring channel: {ch_name}")
-
-                    # 在调用下层测量前尝试断开矩阵的所有连接，避免残留影响
-                    try:
-                        if getattr(self.msys, 'matrix', None) is not None:
-                            try:
-                                self.msys.matrix.open_all()
-                            except Exception as e:
-                                print(f"[Controller] Warning: matrix.open_all() failed before measuring {ch_name}: {e}")
-                            time.sleep(0.08)
-                    except Exception:
-                        pass
 
                     channel_config = {
                         'pins': pins,
@@ -168,10 +152,7 @@ class MeasurementWorker(QObject):
                     resistances[ch_name] = res
 
                     # 在通道间添加保守延迟
-                    try:
-                        time.sleep(0.6)
-                    except Exception:
-                        pass
+                    time.sleep(0.6)
 
                 if not self._is_running:
                     break

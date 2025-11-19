@@ -96,7 +96,7 @@ class KelvinionController:
                     time.sleep(0.1)
                     self.inst.write(f"[SET:PID:A:KI:{entry['I']}]")
                     time.sleep(0.1)
-                    self.inst.write(f"[SET:PID:A:KD:0]")
+                    #self.inst.write(f"[SET:PID:A:KD:0]")
                 print(f"[Kelvinion] Set sample PID: P={entry['P']}, I={entry['I']}")
                 break
 

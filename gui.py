@@ -637,10 +637,7 @@ class MainWindow(QMainWindow):
                 return
 
             # 更新 UI 显示 set temp 文本框（保留两位小数）
-            try:
-                self.set_temp_edit.setText(f"{temp:.2f}")
-            except Exception:
-                pass
+            self.set_temp_edit.setText(f"{temp:.2f}")
 
             # 委托 controller 处理（controller 将负责同时写 A 和 B）
             try:
