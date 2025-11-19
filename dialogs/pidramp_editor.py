@@ -122,14 +122,14 @@ class PidRampEditorDialog(QDialog):
         btn_row.addStretch()
         self.discard_btn = QPushButton('Discard')
         self.discard_btn.setStyleSheet('background-color: #95a5a6; color: white;')
-        self.save_load_btn = QPushButton('Save & Load')
-        self.save_load_btn.setStyleSheet('background-color: #2ecc71; color: white; font-weight: bold;')
+        self.save_btn = QPushButton('Save')
+        self.save_btn.setStyleSheet('background-color: #2ecc71; color: white; font-weight: bold;')
         btn_row.addWidget(self.discard_btn)
-        btn_row.addWidget(self.save_load_btn)
+        btn_row.addWidget(self.save_btn)
         layout.addLayout(btn_row)
 
         self.discard_btn.clicked.connect(self.reject)
-        self.save_load_btn.clicked.connect(self._on_save_and_load)
+        self.save_btn.clicked.connect(self._on_save)
 
     def _gather_data(self):
         # Reconstruct data structure from widget values
@@ -176,7 +176,7 @@ class PidRampEditorDialog(QDialog):
             return txt.lower() == 'true'
         return txt
 
-    def _on_save_and_load(self):
+    def _on_save(self):
         data = self._gather_data()
         # write to config path
         try:
