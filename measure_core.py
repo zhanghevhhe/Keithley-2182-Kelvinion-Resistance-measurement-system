@@ -364,8 +364,21 @@ class MeasurementSystem(QObject):
         self.k6221 = None
         self.matrix = None
 
-        # 先初始化硬件，若失败直接报错
-        self.initialize_instruments()
+        # 先初始化硬件，若失败则捕获异常并发送错误信号
+        while True:
+            try:
+                self.initialize_instruments()
+            except Exception as e:
+                error_msg = f"Failed to initialize instruments: {e}"
+                print(error_msg)
+                try:
+                    self.error_occurred.emit(error_msg)
+                except Exception:
+                    pass
+            else:
+                break
+            time.sleep(5)
+            
 
         # 温度监控定时器 —— 仅在成功初始化硬件后启用
         self.temp_timer = QTimer()
@@ -388,9 +401,8 @@ class MeasurementSystem(QObject):
             print("Initializing instruments...")
             self.rm = pyvisa.ResourceManager()
 
-            # 初始化时传入 pidramp 配置
-            self.kelvinion = KelvinionController(self.rm.open_resource(self.devices["kelvinion"]),
-                                                 self.pidramp)
+            # 初始化各个仪器实例
+            self.kelvinion = KelvinionController(self.rm.open_resource(self.devices["kelvinion"]),self.pidramp)
             self.k6221 = Keithley6221(self.rm.open_resource(self.devices["k6221"]))
             self.matrix = SwitchMatrix3706(self.rm.open_resource(self.devices["matrix"]))
 
@@ -402,7 +414,6 @@ class MeasurementSystem(QObject):
                 self.error_occurred.emit(error_msg)
             except Exception:
                 pass
-            raise
 
     def save_channels_config(self):
         base_dir = os.path.dirname(os.path.abspath(__file__))

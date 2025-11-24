@@ -198,3 +198,5 @@ class PidRampEditorDialog(QDialog):
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, 'Save Error', f'Failed to save PIDRAMP: {e}')
+
+

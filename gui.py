@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
     def __init__(self, controller):
         super().__init__()
         self.setWindowTitle("Low Temperature Measurement System")
-        self.resize(1200, 800)
+        self.resize(1280, 720)
         self.controller = controller
         self._setup_ui()
         self._connect_signals()
@@ -57,7 +57,8 @@ class MainWindow(QMainWindow):
         布局结构：
         - 左侧面板：控制面板（状态、按钮、温度序列、温度显示）
         - 右侧面板：实时数据图表显示
-        - 使用水平分割器，左侧固定宽度420px
+        - 使用水平分割器，左侧固定宽度400px
+        - 右侧自适应宽度，最小宽度800px
         """
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
@@ -69,16 +70,17 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
-        splitter.setSizes([420, 780])
+        splitter.setSizes([400, 400])
         splitter.handle(1).setDisabled(True)
-        left_panel.setFixedWidth(420)
+        left_panel.setFixedWidth(400)
+        right_panel.setMinimumWidth(600)
 
         main_layout.addWidget(splitter)
         # 定义可锁定的控件列表（运行时或手动锁定时禁用）
         self.lockable_widgets = [
             self.path_edit, self.path_btn,
             self.temp_blocks_container, self.add_block_btn, self.clear_all_btn,
-            self.set_temp_edit,
+            self.set_temp_edit, self.channel_btn, self.open_pid_btn, self.load_pid_btn, self.apply_pid_btn,
         ]
         self.setStyleSheet(get_labview_style())
         
@@ -103,26 +105,11 @@ class MainWindow(QMainWindow):
         self.add_block_btn.clicked.connect(self.controller.add_temp_block)
         self.clear_all_btn.clicked.connect(self.controller.clear_all_temp_blocks)
         self.channel_btn.clicked.connect(self.controller.open_channel_config)
-        # PIDRAMP open/load buttons - 更稳健的连接：如果 controller 方法不存在则显示提示
-        # 确保按钮可用
-        self.open_pid_btn.setEnabled(True)
-        self.load_pid_btn.setEnabled(True)
 
-        if hasattr(self.controller, 'choose_pidramp_file'):
-            self.open_pid_btn.clicked.connect(self.controller.choose_pidramp_file)
-        else:
-            self.open_pid_btn.clicked.connect(lambda: QMessageBox.warning(self, "Not ready", "Controller not ready to open PIDRAMP."))
+        self.open_pid_btn.clicked.connect(self.controller.choose_pidramp_file)
+        self.load_pid_btn.clicked.connect(self.controller.load_pidramp_file)
+        self.apply_pid_btn.clicked.connect(self.controller.apply_pidramp_to_hardware)
 
-        if hasattr(self.controller, 'load_pidramp_file'):
-            # connect normally
-            self.load_pid_btn.clicked.connect(self.controller.load_pidramp_file)
-        else:
-            self.load_pid_btn.clicked.connect(lambda: QMessageBox.warning(self, "Not ready", "Controller not ready to load PIDRAMP."))
-        # connect apply button
-        if hasattr(self.controller, 'apply_pidramp_to_hardware'):
-            self.apply_pid_btn.clicked.connect(self.controller.apply_pidramp_to_hardware)
-        else:
-            self.apply_pid_btn.clicked.connect(lambda: QMessageBox.warning(self, "Not ready", "Controller not ready to apply PIDRAMP to device."))
         self.set_temp_edit.mousePressEvent = self._on_set_temp_edit_clicked
 
     def _create_left_panel(self):
@@ -137,6 +124,7 @@ class MainWindow(QMainWindow):
         5. 温度序列管理区域（可滚动）
         6. 温度显示区域（样品温度、样品腔温度、设置温度）
         7. 通道设置按钮
+        8. PID配置按钮组（打开、加载、应用）
         """
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -336,7 +324,7 @@ class MainWindow(QMainWindow):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setWidget(self.temp_blocks_container)
-        self.scroll_area.setMinimumHeight(300)
+        self.scroll_area.setMinimumHeight(150)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.add_block_btn = QPushButton("Add Block")
@@ -364,7 +352,7 @@ class MainWindow(QMainWindow):
     def _create_right_panel(self):
         container = QWidget()
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        
         self.plot_grid = pg.GraphicsLayoutWidget()
         self.plot_grid.setBackground('#fcfcfc')
         layout.addWidget(self.plot_grid)
