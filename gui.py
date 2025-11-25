@@ -80,7 +80,7 @@ class MainWindow(QMainWindow):
         self.lockable_widgets = [
             self.path_edit, self.path_btn,
             self.temp_blocks_container, self.add_block_btn, self.clear_all_btn,
-            self.set_temp_edit, self.channel_btn, self.open_pid_btn, self.load_pid_btn, self.apply_pid_btn,
+            self.set_temp_edit, self.channel_btn,
         ]
         self.setStyleSheet(get_labview_style())
         
