@@ -29,6 +29,7 @@ class KelvinionController:
         self.inst.baud_rate = 115200
         self.inst.data_bits = 8
         self.inst.stop_bits = StopBits.one
+        self.temperatures = (0.0, 0.0)  # (sample_temp, chamber_temp)
 
         # 尝试安全查询 IDN，若失败则继续让上层处理异常
         try:
@@ -161,33 +162,6 @@ class KelvinionController:
             self.set_chamber_range(target)
         print(f"[Kelvinion] Set loop {loop} to {target:.2f} K (ramp_override={ramp_override})")
 
-    def read_temperatures(self):
-        """
-        原子性读取样品(F)和腔体(D)温度，返回 (sample_temp, chamber_temp)。
-        在一个锁内连续 query，避免被其它线程的读写打断造成错位返回。
-        """
-        with self._lock:
-            raw_f = self.inst.query(f"[READ:K:F]")
-            # 确保返回格式解析安全，尽量容错
-            try:
-                t_f = float(raw_f[1:-3])
-            except Exception:
-                try:
-                    t_f = float(raw_f)
-                except Exception:
-                    t_f = float('nan')
-
-            raw_d = self.inst.query(f"[READ:K:D]")
-            try:
-                t_d = float(raw_d[1:-3])
-            except Exception:
-                try:
-                    t_d = float(raw_d)
-                except Exception:
-                    t_d = float('nan')
-
-        return t_f, t_d
-
     def get_set_temperature(self, channel: str = 'A') -> float:  # A\B
         with self._lock:
             raw = self.inst.query(f"[READ:SETP:{channel}]")
@@ -214,7 +188,7 @@ class KelvinionController:
                 return
             interruptible_sleep(0.8)
             # 使用一次性原子读取避免交错
-            t, _ = self.read_temperatures()
+            t = self.temperatures[0]
             if t - target < tol and target - t < tol:
                 print("[Kelvinion] Temperature entered tolerance range...")
                 break
@@ -228,7 +202,7 @@ class KelvinionController:
                 print("[Kelvinion] wait_for_stable aborted by user.")
                 return
             interruptible_sleep(0.8)
-            t, _ = self.read_temperatures()
+            t = self.temperatures[0]
             print(f"[Kelvinion] Stability Check {valid_count+1}/6: {t:.3f} K")
             if t - target < tol and target - t < tol:
                 valid_count += 1
@@ -381,9 +355,15 @@ class MeasurementSystem(QObject):
             
 
         # 温度监控定时器 —— 仅在成功初始化硬件后启用
-        self.temp_timer = QTimer()
-        self.temp_timer.timeout.connect(self._update_hardware_temperatures)
-        self.temp_timer.start(1000)  # 每秒更新一次温度
+        if self.kelvinion is not None:
+            
+            self.temp_timer = QTimer()
+            self.temp_timer.timeout.connect(self._update_hardware_temperatures)
+            self.temp_timer.start(100)  # 每100ms更新一次硬件温度
+
+            self.temp_display_timer = QTimer()
+            self.temp_display_timer.timeout.connect(self._update_display_temperatures)
+            self.temp_display_timer.start(1000)  # 每秒更新一次显示
 
     def get_available_sources(self):
         """返回已成功初始化的可用仪器列表。"""
@@ -469,12 +449,12 @@ class MeasurementSystem(QObject):
     def get_sample_temperature(self):
         """获取样品温度（F通道）"""
         # 保留兼容接口，但优先使用一次性读取（避免交叉读取）
-        t_f, _ = self.get_temperatures()
+        t_f = self.temperatures[0]
         return t_f
 
     def get_chamber_temperature(self):
         """获取样品腔温度（D通道）"""
-        _, t_d = self.get_temperatures()
+        t_d = self.temperatures[1]
         return t_d
 
     def get_temperatures(self):
@@ -484,11 +464,27 @@ class MeasurementSystem(QObject):
         """
         if self.kelvinion is None:
             raise RuntimeError("Kelvinion controller not initialized.")
-        try:
-            return self.kelvinion.read_temperatures()
-        except Exception as e:
-            print(f"[MeasurementSystem] get_temperatures error: {e}")
-            raise
+        
+        with self._lock:
+            raw_f = self.inst.query(f"[READ:K:F]")
+            # 确保返回格式解析安全，尽量容错
+            try:
+                t_f = float(raw_f[1:-3])
+            except Exception:
+                try:
+                    t_f = float(raw_f)
+                except Exception:
+                    t_f = float('nan')
+
+            raw_d = self.inst.query(f"[READ:K:D]")
+            try:
+                t_d = float(raw_d[1:-3])
+            except Exception:
+                try:
+                    t_d = float(raw_d)
+                except Exception:
+                    t_d = float('nan')
+        return t_f, t_d
 
     def _update_hardware_temperatures(self):
         """
@@ -497,14 +493,25 @@ class MeasurementSystem(QObject):
         """
         try:
             # 原子性一次性读取样品与腔体温度，避免交叉读写导致错位或交替值
-            sample_temp, chamber_temp = self.get_temperatures()
+            self.kelvinion.temperatures = self.get_temperatures()
+        except Exception as e:
+            error_msg = f"Failed to read temperatures from Kelvinion: {e}"
+            print(f"[Temperature Update] {error_msg}")
+            try:
+                self.error_occurred.emit(error_msg)
+            except Exception:
+                pass
+            self.kelvinion.temperatures = 0.0, 0.0
 
-            # 发送温度信号
-            self.sample_temp_changed.emit(sample_temp)
+    def _update_display_temperatures(self):
+        # 发送温度信号
+        sample_temp, chamber_temp = self.kelvinion.temperatures
+        try:
+            self.sample_temp_changed.emit(sample_temp) 
             self.chamber_temp_changed.emit(chamber_temp)
             self.current_temp_changed.emit(sample_temp)  # 保持向后兼容
         except Exception as e:
-            error_msg = f"Temperature reading error: {e}"
+            error_msg = f"Temperature display error: {e}"
             print(f"[Temperature Update] {error_msg}")
             try:
                 self.error_occurred.emit(error_msg)

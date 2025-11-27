@@ -99,7 +99,6 @@ class MainWindow(QMainWindow):
         - 设置温度输入框 -> 手动设置温度对话框
         """
         self.run_stop_btn.clicked.connect(self.controller.toggle_measurement)
-        self.lock_btn.clicked.connect(self.controller.toggle_lock)
         self.quit_btn.clicked.connect(self._on_quit_clicked)
         self.path_btn.clicked.connect(self.controller.choose_path)
         self.add_block_btn.clicked.connect(self.controller.add_temp_block)
@@ -165,16 +164,6 @@ class MainWindow(QMainWindow):
         self.run_stop_btn.setMinimumHeight(btn_height)
         self.run_stop_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        # LOCK按钮 - 锁定/解锁UI控件
-        self.lock_btn = QToolButton()
-        self.lock_btn.setText("LOCK")
-        self.lock_btn.setIcon(create_lock_icon())
-        self.lock_btn.setIconSize(icon_size)
-        self.lock_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.lock_btn.setCheckable(True)
-        self.lock_btn.setMinimumHeight(btn_height)
-        self.lock_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
         # QUIT按钮 - 退出应用程序
         self.quit_btn = QToolButton()
         self.quit_btn.setText("QUIT")
@@ -185,7 +174,6 @@ class MainWindow(QMainWindow):
         self.quit_btn.setStyleSheet("QToolButton {background-color: red;color: white;border: 1px solid red;}QToolButton:hover { background-color: pink; }QToolButton:pressed { background-color: darkred; }")
 
         btn_layout.addWidget(self.run_stop_btn)
-        btn_layout.addWidget(self.lock_btn)
         btn_layout.addWidget(self.quit_btn)
 
         layout.addLayout(btn_layout)
@@ -448,20 +436,17 @@ class MainWindow(QMainWindow):
             # 重新应用样式，确保状态正确
             block.check_edited(is_currently_executing=is_currently_executing)
 
-    def set_ui_locked(self, is_manual_locked, is_running):
-        self.lock_btn.setChecked(is_manual_locked)
-        self.lock_btn.setEnabled(not is_running)
+    def set_ui_locked(self, is_running):
         self.run_stop_btn.setEnabled(True)
         self.run_stop_btn.setChecked(is_running)
         self._update_run_stop_button_style(is_running)
         for widget in self.lockable_widgets:
-            widget.setEnabled(not is_manual_locked and not is_running)
+            widget.setEnabled(not is_running)
         for block in getattr(self, 'temp_blocks', []):
             for w in [block.start, block.stop, block.step, block.ramp]:
-                w.setReadOnly(is_manual_locked or is_running)
-            block.end_checkbox.setEnabled(not is_manual_locked and not is_running)
+                w.setReadOnly(is_running)
+            block.end_checkbox.setEnabled(not is_running)
         self.run_stop_btn.setStyleSheet("")
-        self.lock_btn.setStyleSheet("")
 
     def plot_data_batch(self, data_by_ch, clear=True):
         """
@@ -568,7 +553,7 @@ class MainWindow(QMainWindow):
             line.setStyleSheet("color: #d0d7de; background: #d0d7de; height: 0.5px; margin: 0;")
             layout.insertWidget(layout.count()-1, line)
         layout.addStretch()  # 重新添加stretch
-        self.set_ui_locked(self.lock_btn.isChecked(), self.run_stop_btn.isChecked())
+        self.set_ui_locked(self.run_stop_btn.isChecked())
 
     def clear_all_temp_blocks(self):
         # 移除所有widget和stretch
@@ -583,7 +568,7 @@ class MainWindow(QMainWindow):
         # 保证只有一个stretch
         if layout.count() == 0 or not isinstance(layout.itemAt(layout.count()-1).widget(), type(None)):
             layout.addStretch()
-        self.set_ui_locked(self.lock_btn.isChecked(), self.run_stop_btn.isChecked())
+        self.set_ui_locked(self.run_stop_btn.isChecked())
 
     def get_sequence_data(self):
         sequence_data = []

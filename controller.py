@@ -157,7 +157,7 @@ class MeasurementWorker(QObject):
                 if not self._is_running:
                     break
 
-                temp = self.msys.get_sample_temperature()
+                temp = self.msys.kelvinion.temperatures[0]
                 self.new_data.emit(temp, resistances)
 
             if not self._is_running:
@@ -187,7 +187,6 @@ class AppController(QObject):
 
         # --- State Management ---
         self.is_running = False
-        self.is_manual_locked = False
 
         # --- Thread Management ---
         self.measurement_thread = None
@@ -215,8 +214,7 @@ class AppController(QObject):
 
     def _update_ui_lock_state(self):
         """计算并更新UI的锁定状态。"""
-        is_locked = self.is_running or self.is_manual_locked
-        self.view.set_ui_locked(is_locked, self.is_running)
+        self.view.set_ui_locked(self.is_running)
 
     # -------------------------------------------------------------------------
     # 业务逻辑方法
@@ -300,12 +298,6 @@ class AppController(QObject):
             self.measurement_thread = None
         self.measurement_worker = None
 
-    def toggle_lock(self):
-        """切换手动锁定状态。"""
-        if not self.is_running:
-            self.is_manual_locked = not self.is_manual_locked
-            self._update_ui_lock_state()
-
     def on_block_changed(self, block_index):
         """处理当前执行块变化的信号。"""
         self.view.highlight_running_block(block_index)
@@ -385,7 +377,7 @@ class AppController(QObject):
     def open_channel_config(self):
         """打开通道配置对话框。"""
         from gui import ChannelConfigDialog
-        is_locked = self.is_running or self.is_manual_locked
+        is_locked = self.is_running
         dlg = ChannelConfigDialog(self.model, self.view, is_locked=is_locked)
         dlg.config_changed.connect(self.on_channel_config_changed)
         dlg.exec_()
@@ -458,8 +450,6 @@ class AppController(QObject):
                 model.kelvinion.set_temperature(temp, loop='A', ramp_override=ramp)
                 model.kelvinion.set_temperature(lowerT(temp), loop='B', ramp_override=None)
                 try:
-                    model.sample_temp_changed.emit(temp)
-                    model.chamber_temp_changed.emit(temp + 0.5)
                     model.current_temp_changed.emit(temp)
                 except Exception:
                     pass
@@ -498,7 +488,7 @@ class AppController(QObject):
                 target_a = kelvin.get_set_temperature('A')
             except Exception:
                 try:
-                    target_a = model.get_sample_temperature()
+                    target_a = kelvin.temperatures[0]
                 except Exception:
                     target_a = None
 
@@ -517,7 +507,7 @@ class AppController(QObject):
                 target_b = kelvin.get_set_temperature('B')
             except Exception:
                 try:
-                    target_b = model.get_chamber_temperature()
+                    target_b = kelvin.temperatures[1]
                 except Exception:
                     target_b = None
 
