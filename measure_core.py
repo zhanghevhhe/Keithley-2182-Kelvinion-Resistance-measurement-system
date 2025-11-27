@@ -71,7 +71,7 @@ class KelvinionController:
                     ramp = entry["ramp"]
                     break
         self._safe_write(f"[SET:RAMP:A:{ramp}]")
-        print(f"[Kelvinion] Set sample RAMP: {ramp}")
+        print(f"[Kelvinion] Set {None if ramp_override is None else 'override '}sample RAMP: {ramp}")
 
     def set_chamber_ramp(self, target: float, ramp_override: float = None):
         """
@@ -359,7 +359,7 @@ class MeasurementSystem(QObject):
             
             self.temp_timer = QTimer()
             self.temp_timer.timeout.connect(self._update_hardware_temperatures)
-            self.temp_timer.start(100)  # 每100ms更新一次硬件温度
+            self.temp_timer.start(200)  # 每200 ms更新一次硬件温度
 
             self.temp_display_timer = QTimer()
             self.temp_display_timer.timeout.connect(self._update_display_temperatures)
@@ -462,11 +462,11 @@ class MeasurementSystem(QObject):
         原子性获取样品(F)和腔体(D)温度，返回 (sample_temp, chamber_temp)。
         UI / 外部调用应优先使用此接口避免并发交错。
         """
-        if self.kelvinion is None:
+        kelvinion = self.kelvinion
+        if kelvinion is None:
             raise RuntimeError("Kelvinion controller not initialized.")
-        
-        with self._lock:
-            raw_f = self.inst.query(f"[READ:K:F]")
+        with kelvinion._lock:
+            raw_f = kelvinion.inst.query(f"[READ:K:F]")
             # 确保返回格式解析安全，尽量容错
             try:
                 t_f = float(raw_f[1:-3])
@@ -476,7 +476,7 @@ class MeasurementSystem(QObject):
                 except Exception:
                     t_f = float('nan')
 
-            raw_d = self.inst.query(f"[READ:K:D]")
+            raw_d = kelvinion.inst.query(f"[READ:K:D]")
             try:
                 t_d = float(raw_d[1:-3])
             except Exception:

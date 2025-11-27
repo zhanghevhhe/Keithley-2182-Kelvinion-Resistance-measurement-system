@@ -110,8 +110,10 @@ class MeasurementWorker(QObject):
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Setting temperature to {temp_point:.2f} K...")
 
                 if self.msys.kelvinion:
-                    self.msys.kelvinion.set_temperature(temp_point, 'A')
+                    
+                    self.msys.kelvinion.set_temperature(temp_point, 'A', ramp_override=block.get('ramp', None))
                     self.msys.kelvinion.set_temperature(lowerT(temp_point), 'B')
+
                     self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Waiting for temperature to stabilize at {temp_point:.2f} K...")
                     self.msys.kelvinion.wait_for_stable(temp_point, is_running_checker=lambda: self._is_running)
 
