@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
     def __init__(self, controller):
         super().__init__()
         self.setWindowTitle("Low Temperature Measurement System")
-        self.resize(1280, 720)
+        self.resize(1400, 800)
         self.controller = controller
         self._setup_ui()
         self._connect_signals()
@@ -67,15 +67,21 @@ class MainWindow(QMainWindow):
         left_panel = self._create_left_panel()
         right_panel = self._create_right_panel()
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([400, 400])
-        splitter.handle(1).setDisabled(True)
-        left_panel.setFixedWidth(400)
-        right_panel.setMinimumWidth(600)
 
-        main_layout.addWidget(splitter)
+        left_panel.setFixedWidth(400)
+        right_panel.setMinimumWidth(600)        
+        main_layout.addWidget(left_panel)
+        main_layout.addWidget(right_panel, 1)
+
+        # splitter = QSplitter(Qt.Horizontal)
+        # splitter.addWidget(left_panel)
+        # splitter.addWidget(right_panel)
+        # splitter.setSizes([400, 400])
+        # splitter.handle(1).setDisabled(True)
+        # left_panel.setFixedWidth(400)
+        # right_panel.setMinimumWidth(600)
+
+        # main_layout.addWidget(splitter)
         # 定义可锁定的控件列表（运行时或手动锁定时禁用）
         self.lockable_widgets = [
             self.path_edit, self.path_btn,

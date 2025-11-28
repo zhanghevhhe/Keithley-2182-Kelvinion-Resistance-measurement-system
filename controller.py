@@ -443,14 +443,15 @@ class AppController(QObject):
         - 腔体回路 B: 仅写入 setpoint
         """
         model = getattr(self, "model", None)
+        kelvinion = getattr(model, "kelvinion", None)
         if model is None:
             print("[Controller] No model attached; cannot apply temperature.")
             return
 
         try:
-            if getattr(model, "kelvinion", None):
-                model.kelvinion.set_temperature(temp, loop='A', ramp_override=ramp)
-                model.kelvinion.set_temperature(lowerT(temp), loop='B', ramp_override=None)
+            if kelvinion:
+                kelvinion.set_temperature(temp, loop='A', ramp_override=ramp)
+                kelvinion.set_temperature(lowerT(temp), loop='B', ramp_override=None)
                 try:
                     model.current_temp_changed.emit(temp)
                 except Exception:

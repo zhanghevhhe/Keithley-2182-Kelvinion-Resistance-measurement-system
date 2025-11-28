@@ -71,6 +71,7 @@ class KelvinionController:
                     ramp = entry["ramp"]
                     break
         self._safe_write(f"[SET:RAMP:A:{ramp}]")
+        print(f"[Kelvinion] Set sample RAMP: {ramp}" + (f" (override: {ramp_override})" if ramp_override is not None else ""))
 
     def set_chamber_ramp(self, target: float, ramp_override: float = None):
         """
@@ -112,11 +113,13 @@ class KelvinionController:
                 print(f"[Kelvinion] Set chamber PID: P={entry['P']}, I={entry['I']}")
                 break
 
-    def set_sample_temperature(self, target: float, ramp_override: float = None):
+    def set_sample_temperature(self, target: float):
         self._safe_write(f"[SET:SETP:A:{target}K]")
+        print(f"[Kelvinion] Set sample temperature: {target}")
 
-    def set_chamber_temperature(self, target: float, ramp_override: float = None):
+    def set_chamber_temperature(self, target: float):
         self._safe_write(f"[SET:SETP:B:{target}K]")
+        print(f"[Kelvinion] Set sample temperature: {target}")
 
     def set_sample_range(self, target: float):
         for entry in self.pidramp["sample_range"]:
@@ -146,7 +149,7 @@ class KelvinionController:
             self.set_chamber_ramp(target, ramp_override)
             self.set_chamber_pid(target)
             self.set_chamber_range(target)
-        print(f"[Kelvinion] Set loop {loop} to {target:.2f} K" +  f"(ramp_override={ramp_override})" if ramp_override is not None else "")
+        print(f"[Kelvinion] Set loop {loop} to {target:.2f} K")
 
     def get_set_temperature(self, channel: str = 'A') -> float:  # A\B
         raw = self._safe_query(f"[READ:SETP:{channel}]")
@@ -197,7 +200,7 @@ class KelvinionController:
                 print("[Kelvinion] wait_for_stable aborted by user.")
                 return
             interruptible_sleep(0.8)
-            # 使用一次性原子读取避免交错
+            # 从属性获取温度，避免交叉读写
             t = self.get_sample_temperature() if loop == 'A' else self.get_chamber_temperature()
             if t - target < tol and target - t < tol:
                 print("[Kelvinion] Temperature entered tolerance range...")
