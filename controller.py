@@ -110,7 +110,7 @@ class MeasurementWorker(QObject):
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Setting temperature to {temp_point:.2f} K...")
 
                 if self.msys.kelvinion:
-                    
+
                     self.msys.kelvinion.set_temperature(temp_point, 'A', ramp_override=block.get('ramp', None))
                     self.msys.kelvinion.set_temperature(lowerT(temp_point), 'B')
 
@@ -159,7 +159,7 @@ class MeasurementWorker(QObject):
                 if not self._is_running:
                     break
 
-                temp = self.msys.kelvinion.temperatures[0]
+                temp = self.msys.kelvinion.get_sample_temperature()
                 self.new_data.emit(temp, resistances)
 
             if not self._is_running:
@@ -490,7 +490,7 @@ class AppController(QObject):
                 target_a = kelvin.get_set_temperature('A')
             except Exception:
                 try:
-                    target_a = kelvin.temperatures[0]
+                    target_a = kelvin.get_sample_temperature()
                 except Exception:
                     target_a = None
 
@@ -509,7 +509,7 @@ class AppController(QObject):
                 target_b = kelvin.get_set_temperature('B')
             except Exception:
                 try:
-                    target_b = kelvin.temperatures[1]
+                    target_b = kelvin.get_chamber_temperature()
                 except Exception:
                     target_b = None
 

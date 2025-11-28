@@ -67,11 +67,10 @@ class KelvinionController:
         else:
             ramp = 1
             for entry in self.pidramp["sample_ramp"]:
-                if entry["min"] <= target <= entry["max"]:
+                if entry["min"] <= target < entry["max"]:
                     ramp = entry["ramp"]
                     break
         self._safe_write(f"[SET:RAMP:A:{ramp}]")
-        print(f"[Kelvinion] Set {None if ramp_override is None else 'override '}sample RAMP: {ramp}")
 
     def set_chamber_ramp(self, target: float, ramp_override: float = None):
         """
@@ -82,7 +81,7 @@ class KelvinionController:
         else:
             ramp = 1
             for entry in self.pidramp["chamber_ramp"]:
-                if entry["min"] <= target <= entry["max"]:
+                if entry["min"] <= target < entry["max"]:
                     ramp = entry["ramp"]
                     break
         self._safe_write(f"[SET:RAMP:B:{ramp}]")
@@ -90,53 +89,46 @@ class KelvinionController:
 
     def set_sample_pid(self, target: float):
         for entry in self.pidramp["sample_pid"]:
-            if entry["min"] <= target <= entry["max"]:
+            if entry["min"] <= target < entry["max"]:
                 # PID 写入在同一锁区域内进行，避免并发干扰
                 with self._lock:
                     self.inst.write(f"[SET:PID:A:KP:{entry['P']}]")
                     time.sleep(0.1)
                     self.inst.write(f"[SET:PID:A:KI:{entry['I']}]")
-                    time.sleep(0.1)
+                    # time.sleep(0.1)
                     #self.inst.write(f"[SET:PID:A:KD:0]")
                 print(f"[Kelvinion] Set sample PID: P={entry['P']}, I={entry['I']}")
                 break
 
     def set_chamber_pid(self, target: float):
         for entry in self.pidramp["chamber_pid"]:
-            if entry["min"] <= target <= entry["max"]:
+            if entry["min"] <= target < entry["max"]:
                 with self._lock:
                     self.inst.write(f"[SET:PID:B:KP:{entry['P']}]")
                     time.sleep(0.1)
                     self.inst.write(f"[SET:PID:B:KI:{entry['I']}]")
-                    time.sleep(0.1)
-                    self.inst.write(f"[SET:PID:B:KD:0]")
+                    # time.sleep(0.1)
+                    #self.inst.write(f"[SET:PID:B:KD:0]")
                 print(f"[Kelvinion] Set chamber PID: P={entry['P']}, I={entry['I']}")
                 break
 
     def set_sample_temperature(self, target: float, ramp_override: float = None):
         self._safe_write(f"[SET:SETP:A:{target}K]")
-        # ramp/pid 写入内部已安全序列化
-        self.set_sample_ramp(target, ramp_override)
-        time.sleep(0.05)
-        self.set_sample_pid(target)
 
     def set_chamber_temperature(self, target: float, ramp_override: float = None):
         self._safe_write(f"[SET:SETP:B:{target}K]")
-        self.set_chamber_ramp(target, ramp_override)
-        time.sleep(0.05)
-        self.set_chamber_pid(target)
 
     def set_sample_range(self, target: float):
         for entry in self.pidramp["sample_range"]:
-            if entry["min"] <= target <= entry["max"]:
-                self.inst.write(f"[SET:RANGE:A:{entry['range']}]")
+            if entry["min"] <= target < entry["max"]:
+                self._safe_write(f"[SET:RANGE:A:{entry['range']}]")
                 print(f"[Kelvinion] Set sample range: {entry['range']}")
                 break
 
     def set_chamber_range(self, target: float):
         for entry in self.pidramp["chamber_range"]:
-            if entry["min"] <= target <= entry["max"]:
-                self.inst.write(f"[SET:RANGE:B:{entry['range']}]")
+            if entry["min"] <= target < entry["max"]:
+                self._safe_write(f"[SET:RANGE:B:{entry['range']}]")
                 print(f"[Kelvinion] Set chamber range: {entry['range']}")
                 break
 
@@ -145,37 +137,55 @@ class KelvinionController:
         增加 ramp_override：当 UI 手动设置温度时可传入临时速率覆盖 pidramp 表。
         """
         if loop == 'A':
-            self.inst.write(f"[SET:SETP:A:{target}K]")
-            time.sleep(0.05)
+            self.set_sample_temperature(target)
             self.set_sample_ramp(target, ramp_override)
-            time.sleep(0.05)
             self.set_sample_pid(target)
-            time.sleep(0.05)
             self.set_sample_range(target)
         elif loop == 'B':
-            self.inst.write(f"[SET:SETP:B:{target}K]")
-            time.sleep(0.05)
+            self.set_chamber_temperature(target)
             self.set_chamber_ramp(target, ramp_override)
-            time.sleep(0.05)
             self.set_chamber_pid(target)
-            time.sleep(0.05)
             self.set_chamber_range(target)
-        print(f"[Kelvinion] Set loop {loop} to {target:.2f} K (ramp_override={ramp_override})")
+        print(f"[Kelvinion] Set loop {loop} to {target:.2f} K" +  f"(ramp_override={ramp_override})" if ramp_override is not None else "")
 
     def get_set_temperature(self, channel: str = 'A') -> float:  # A\B
-        with self._lock:
-            raw = self.inst.query(f"[READ:SETP:{channel}]")
+        raw = self._safe_query(f"[READ:SETP:{channel}]")
         try:
             return float(raw[1:-3])
         except Exception:
-            try:
-                return float(raw)
-            except Exception:
-                return float('nan')
+            return float('nan')
 
+    def get_sample_temperature(self):
+        """从属性获取样品温度（F通道，temperature第一个元素）"""
+        return self.temperatures[0]
+    
+    def get_chamber_temperature(self):
+        """从属性获取样品腔温度（D通道，temperature第二个元素）"""
+        return self.temperatures[1]
+    
+    def get_temperatures(self):
+        """
+        原子性获取样品(F)和腔体(D)温度，返回 (sample_temp, chamber_temp)。
+        UI / 外部调用应优先使用此接口避免并发交错。
+        """
+        with self._lock:
+            raw_f = self.inst.query(f"[READ:K:F]")
+            # 确保返回格式解析安全，尽量容错
+            try:
+                t_f = float(raw_f[1:-3])
+            except Exception:
+                t_f = float('nan')
+
+            raw_d = self.inst.query(f"[READ:K:D]")
+            try:
+                t_d = float(raw_d[1:-3])
+            except Exception:
+                t_d = float('nan')
+        return t_f, t_d
+    
     def _tolerance(self, target: float) -> float:
         for entry in self.pidramp["tolerance_ranges"]:
-            if entry["min"] <= target <= entry["max"]:
+            if entry["min"] <= target < entry["max"]:
                 return entry["tolerance"]
         return 0.1
 
@@ -446,45 +456,7 @@ class MeasurementSystem(QObject):
             "enabled": is_enabled
         }
 
-    def get_sample_temperature(self):
-        """获取样品温度（F通道）"""
-        # 保留兼容接口，但优先使用一次性读取（避免交叉读取）
-        t_f = self.temperatures[0]
-        return t_f
 
-    def get_chamber_temperature(self):
-        """获取样品腔温度（D通道）"""
-        t_d = self.temperatures[1]
-        return t_d
-
-    def get_temperatures(self):
-        """
-        原子性获取样品(F)和腔体(D)温度，返回 (sample_temp, chamber_temp)。
-        UI / 外部调用应优先使用此接口避免并发交错。
-        """
-        kelvinion = self.kelvinion
-        if kelvinion is None:
-            raise RuntimeError("Kelvinion controller not initialized.")
-        with kelvinion._lock:
-            raw_f = kelvinion.inst.query(f"[READ:K:F]")
-            # 确保返回格式解析安全，尽量容错
-            try:
-                t_f = float(raw_f[1:-3])
-            except Exception:
-                try:
-                    t_f = float(raw_f)
-                except Exception:
-                    t_f = float('nan')
-
-            raw_d = kelvinion.inst.query(f"[READ:K:D]")
-            try:
-                t_d = float(raw_d[1:-3])
-            except Exception:
-                try:
-                    t_d = float(raw_d)
-                except Exception:
-                    t_d = float('nan')
-        return t_f, t_d
 
     def _update_hardware_temperatures(self):
         """
@@ -493,7 +465,7 @@ class MeasurementSystem(QObject):
         """
         try:
             # 原子性一次性读取样品与腔体温度，避免交叉读写导致错位或交替值
-            self.kelvinion.temperatures = self.get_temperatures()
+            self.kelvinion.temperatures = self.kelvinion.get_temperatures()
         except Exception as e:
             error_msg = f"Failed to read temperatures from Kelvinion: {e}"
             print(f"[Temperature Update] {error_msg}")
@@ -660,39 +632,3 @@ class MeasurementSystem(QObject):
             except Exception:
                 pass
             raise
-
-    def set_ramp_for_loop(self, loop: str, ramp: float):
-        """
-        UI 若只想单独设置 ramp（不改 setpoint），可调用此接口。
-        """
-        if not self.kelvinion:
-            msg = "[System] set_ramp_for_loop called but Kelvinion not initialized."
-            print(msg)
-            try:
-                self.error_occurred.emit(msg)
-            except Exception:
-                pass
-            return
-
-        try:
-            # 尝试读取当前设定的 setpoint，再写入对应回路的 ramp
-            current_set = None
-            try:
-                current_set = self.kelvinion.get_set_temperature('A' if loop == 'A' else 'B')
-            except Exception:
-                # 如果读取失败，传入 300K 作为占位 target 用于查表（但我们使用 ramp_override 所以不影响）
-                current_set = 300.0
-
-            if loop == 'A':
-                self.kelvinion.set_sample_ramp(current_set, ramp_override=ramp)
-            elif loop == 'B':
-                self.kelvinion.set_chamber_ramp(current_set, ramp_override=ramp)
-            else:
-                print(f"[System] Invalid loop {loop} for setting ramp.")
-        except Exception as e:
-            msg = f"Failed to set ramp for loop {loop}: {e}"
-            print(msg)
-            try:
-                self.error_occurred.emit(msg)
-            except Exception:
-                pass
