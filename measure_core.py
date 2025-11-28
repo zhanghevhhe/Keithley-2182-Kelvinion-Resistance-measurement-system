@@ -198,7 +198,7 @@ class KelvinionController:
                 return
             interruptible_sleep(0.8)
             # 使用一次性原子读取避免交错
-            t = self.temperatures[0]
+            t = self.get_sample_temperature() if loop == 'A' else self.get_chamber_temperature()
             if t - target < tol and target - t < tol:
                 print("[Kelvinion] Temperature entered tolerance range...")
                 break
@@ -212,7 +212,7 @@ class KelvinionController:
                 print("[Kelvinion] wait_for_stable aborted by user.")
                 return
             interruptible_sleep(0.8)
-            t = self.temperatures[0]
+            t = self.get_sample_temperature() if loop == 'A' else self.get_chamber_temperature()
             print(f"[Kelvinion] Stability Check {valid_count+1}/6: {t:.3f} K")
             if t - target < tol and target - t < tol:
                 valid_count += 1
