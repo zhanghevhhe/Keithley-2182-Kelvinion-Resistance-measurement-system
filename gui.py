@@ -18,7 +18,7 @@ from controller import AppController
 import numpy as np
 
 # 导入其他模块模块
-from ui_utils import get_labview_style, create_run_icon, create_stop_icon, create_lock_icon, create_labview_folder_icon
+from ui_utils import get_labview_style, create_run_icon, create_stop_icon, create_labview_folder_icon
 from widgets.temp_block_widget import TempBlockWidget
 from dialogs.set_temp_dialog import SetTempDialog
 from dialogs.channel_config_dialog import ChannelConfigDialog
@@ -72,16 +72,6 @@ class MainWindow(QMainWindow):
         right_panel.setMinimumWidth(600)        
         main_layout.addWidget(left_panel)
         main_layout.addWidget(right_panel, 1)
-
-        # splitter = QSplitter(Qt.Horizontal)
-        # splitter.addWidget(left_panel)
-        # splitter.addWidget(right_panel)
-        # splitter.setSizes([400, 400])
-        # splitter.handle(1).setDisabled(True)
-        # left_panel.setFixedWidth(400)
-        # right_panel.setMinimumWidth(600)
-
-        # main_layout.addWidget(splitter)
         # 定义可锁定的控件列表（运行时或手动锁定时禁用）
         self.lockable_widgets = [
             self.path_edit, self.path_btn,
@@ -107,8 +97,10 @@ class MainWindow(QMainWindow):
         self.run_stop_btn.clicked.connect(self.controller.toggle_measurement)
         self.quit_btn.clicked.connect(self._on_quit_clicked)
         self.path_btn.clicked.connect(self.controller.choose_path)
+        
         self.add_block_btn.clicked.connect(self.controller.add_temp_block)
         self.clear_all_btn.clicked.connect(self.controller.clear_all_temp_blocks)
+
         self.channel_btn.clicked.connect(self.controller.open_channel_config)
 
         self.open_pid_btn.clicked.connect(self.controller.choose_pidramp_file)
@@ -181,9 +173,8 @@ class MainWindow(QMainWindow):
 
         btn_layout.addWidget(self.run_stop_btn)
         btn_layout.addWidget(self.quit_btn)
-
         layout.addLayout(btn_layout)
-        
+
         layout.addWidget(self._create_path_panel())
 
         # --- 中部 (拉伸填满) ---

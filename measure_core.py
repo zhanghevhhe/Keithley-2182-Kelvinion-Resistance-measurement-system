@@ -35,10 +35,7 @@ class KelvinionController:
         try:
             print(self._safe_query('*IDN?'))
         except Exception:
-            try:
-                print(self.inst.query('*IDN?'))
-            except Exception:
-                pass
+            pass
 
     # ---------- 安全读写辅助 ----------
     def _safe_write(self, cmd: str):
@@ -159,10 +156,7 @@ class KelvinionController:
 
     def get_set_temperature(self, channel: str = 'A') -> float:  # A\B
         raw = self._safe_query(f"[READ:SETP:{channel}]")
-        try:
-            return float(raw[1:-3])
-        except Exception:
-            return float('nan')
+        return float(raw[1:-3])
 
     def get_sample_temperature(self):
         """从属性获取样品温度（F通道，temperature第一个元素）"""
@@ -179,17 +173,10 @@ class KelvinionController:
         """
         with self._lock:
             raw_f = self.inst.query(f"[READ:K:F]")
-            # 确保返回格式解析安全，尽量容错
-            try:
-                t_f = float(raw_f[1:-3])
-            except Exception:
-                t_f = float('nan')
+            t_f = float(raw_f[1:-3])
 
             raw_d = self.inst.query(f"[READ:K:D]")
-            try:
-                t_d = float(raw_d[1:-3])
-            except Exception:
-                t_d = float('nan')
+            t_d = float(raw_d[1:-3])
         return t_f, t_d
     
     def _tolerance(self, target: float) -> float:
@@ -302,8 +289,12 @@ class SwitchMatrix3706:
         print("[3706] Initialized")
 
     def open_all(self):
-        self.inst.write('channel.open("allslots")')
-        print("[3706] All channels opened (disconnected)")
+        try:
+            self.inst.write('channel.open("allslots")')
+            print("[3706] All channels opened (disconnected)")
+        except Exception as e:
+            print(f"[3706] Error opening all channels: {e}")
+
 
     def connect(self, pins):
         # 示例：pins=[1, 2, 3, 4]
@@ -313,7 +304,7 @@ class SwitchMatrix3706:
             chan_str = f'4{row}{col:02d}'
             cmds.append(chan_str)
 
-        # DEBUG: 列出将要关闭的通道 id，便于排查映射问题
+        # DEBUG: 列出将要闭合的通道 id，便于排查映射问题
         print(f"[3706] Connecting pins {pins} -> channels {cmds}")
         for chan_str in cmds:
             try:
@@ -323,11 +314,23 @@ class SwitchMatrix3706:
 
 
 class MeasurementSystem(QObject):
-    current_temp_changed = pyqtSignal(float)   # 保持向后兼容
     sample_temp_changed = pyqtSignal(float)    # 样品温度（F通道）
     chamber_temp_changed = pyqtSignal(float)   # 样品腔温度（D通道）
     error_occurred = pyqtSignal(str)           # 错误信息信号
     warning_occurred = pyqtSignal(str)         # 警告信息信号
+
+    def _safe_emit(self, signal, *args):
+        """统一发射信号的安全封装，避免在多个地方重复 try/except。
+        信号发射失败时记录错误但不抛出。
+        """
+        try:
+            signal.emit(*args)
+        except Exception as e:
+            try:
+                name = getattr(signal, '__name__', str(signal))
+            except Exception:
+                name = str(signal)
+            print(f"[MeasurementSystem] Failed to emit {name}: {e}")
 
     def __init__(self):
         super().__init__()
@@ -364,25 +367,21 @@ class MeasurementSystem(QObject):
             except Exception as e:
                 error_msg = f"Failed to initialize instruments: {e}"
                 print(error_msg)
-                try:
-                    self.error_occurred.emit(error_msg)
-                except Exception:
-                    pass
+                self._safe_emit(self.error_occurred, error_msg)
             else:
                 break
             time.sleep(5)
             
 
         # 温度监控定时器 —— 仅在成功初始化硬件后启用
-        if self.kelvinion is not None:
             
-            self.temp_timer = QTimer()
-            self.temp_timer.timeout.connect(self._update_hardware_temperatures)
-            self.temp_timer.start(200)  # 每200 ms更新一次硬件温度
+        self.temp_timer = QTimer()
+        self.temp_timer.timeout.connect(self._update_hardware_temperatures)
+        self.temp_timer.start(200)  # 每200 ms更新一次硬件温度
 
-            self.temp_display_timer = QTimer()
-            self.temp_display_timer.timeout.connect(self._update_display_temperatures)
-            self.temp_display_timer.start(1000)  # 每秒更新一次显示
+        self.temp_display_timer = QTimer()
+        self.temp_display_timer.timeout.connect(self._update_display_temperatures)
+        self.temp_display_timer.start(1000)  # 每秒更新一次显示
 
     def get_available_sources(self):
         """返回已成功初始化的可用仪器列表。"""
@@ -409,10 +408,7 @@ class MeasurementSystem(QObject):
         except Exception as e:
             error_msg = f"Error initializing instruments: {e}"
             print(error_msg)
-            try:
-                self.error_occurred.emit(error_msg)
-            except Exception:
-                pass
+            self._safe_emit(self.error_occurred, error_msg)
 
     def save_channels_config(self):
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -478,29 +474,21 @@ class MeasurementSystem(QObject):
         except Exception as e:
             error_msg = f"Failed to read temperatures from Kelvinion: {e}"
             print(f"[Temperature Update] {error_msg}")
-            try:
-                self.error_occurred.emit(error_msg)
-            except Exception:
-                pass
+            self._safe_emit(self.error_occurred, error_msg)
             self.kelvinion.temperatures = 0.0, 0.0
 
     def _update_display_temperatures(self):
         # 发送温度信号
         sample_temp, chamber_temp = self.kelvinion.temperatures
         try:
-            self.sample_temp_changed.emit(sample_temp) 
-            self.chamber_temp_changed.emit(chamber_temp)
-            self.current_temp_changed.emit(sample_temp)  # 保持向后兼容
+            self._safe_emit(self.sample_temp_changed, sample_temp)
+            self._safe_emit(self.chamber_temp_changed, chamber_temp)
         except Exception as e:
             error_msg = f"Temperature display error: {e}"
             print(f"[Temperature Update] {error_msg}")
-            try:
-                self.error_occurred.emit(error_msg)
-            except Exception:
-                pass
-            self.sample_temp_changed.emit(0.0)
-            self.chamber_temp_changed.emit(0.0)
-            self.current_temp_changed.emit(0.0)
+            self._safe_emit(self.error_occurred, error_msg)
+            self._safe_emit(self.sample_temp_changed, 0.0)
+            self._safe_emit(self.chamber_temp_changed, 0.0)
 
     def measure_single_channel(self, ch_name, channel_config):
         # --- 使用你提供的 delta_measure 方法进行真实测量 ---
@@ -520,13 +508,7 @@ class MeasurementSystem(QObject):
             # 串行化整个测量过程，避免多个线程同时写入仪器导致超时
             with self.lock:
                 # 1. 使用 connect 方法连接指定通道
-                try:
-                    self.matrix.connect(pins)
-                except Exception as e:
-                    print(f"[System] Error connecting matrix for {ch_name}: {e}")
-                    raise
-
-                # give the switch matrix a short settle time
+                self.matrix.connect(pins)
                 time.sleep(0.1)
 
                 # 2. 重试 delta_measure 以应对偶发超时
@@ -542,11 +524,7 @@ class MeasurementSystem(QObject):
                         msg = str(e)
                         print(f"[System] delta_measure attempt {attempt} failed for {ch_name}: {msg}")
                         # 在超时或通信错误时，尝试发送中止并稍后重试
-                        try:
-                            if self.k6221:
-                                self.k6221.inst.write('SOURCE:SWEEP:ABORT')
-                        except Exception:
-                            pass
+                        self.k6221.inst.write('SOURCE:SWEEP:ABORT')
                         time.sleep(backoff * attempt)
 
                 if last_exc is not None and voltage is None:
@@ -560,45 +538,24 @@ class MeasurementSystem(QObject):
                     resistance = voltage / current
 
                 print(f"[System] Measured R = {resistance:.6e} Ohm for channel {ch_name} (V={voltage:.6e}, I={current:.2e})")
-
                 return resistance
 
         except Exception as e:
             error_msg = f"Measurement error on channel {ch_name}: {e}"
             print(f"FATAL ERROR during measurement of channel {ch_name}: {e}")
-            try:
-                self.error_occurred.emit(error_msg)
-            except Exception:
-                pass
+            self._safe_emit(self.error_occurred, error_msg)
             # 如果 delta_measure 中途出错，尝试中止扫描
             try:
-                if self.k6221:
-                    self.k6221.inst.write('SOURCE:SWEEP:ABORT')
-                    print("[K6221] Sent ABORT command due to error.")
+                self.k6221.inst.write('SOURCE:SWEEP:ABORT')
+                print("[K6221] Sent ABORT command due to error.")
             except Exception as abort_e:
                 print(f"Error sending ABORT command: {abort_e}")
             return float('nan')
 
         finally:
             # 无论成功与否，最后都断开所有开关 (重要安全步骤)
-            if self.matrix:
-                try:
-                    self.matrix.open_all()
-                except Exception as open_all_e:
-                    print(f"Error in finally block calling open_all: {open_all_e}")
+            self.matrix.open_all()
 
-    def shutdown_instruments(self):
-        print("Shutting down instruments...")
-        if self.kelvinion:
-            try:
-                self.kelvinion.inst.close()
-            except Exception:
-                pass
-        if self.k6221:
-            try:
-                self.k6221.inst.close()
-            except Exception:
-                pass
 
     def load_pidramp(self, path: str) -> bool:
         """
@@ -620,24 +577,13 @@ class MeasurementSystem(QObject):
             self.pidramp = data
 
             # 如果已初始化 kelvinion 实例，更新其 pidramp 引用
-            if getattr(self, 'kelvinion', None) is not None:
-                try:
-                    self.kelvinion.pidramp = data
-                except Exception:
-                    pass
-
+            if getattr(self, 'kelvinion', None):
+                self.kelvinion.pidramp = data
             if not has_expected:
                 # 发出警告信号，告知加载的文件可能不是完整的 pidramp 配置
-                try:
-                    self.warning_occurred.emit('Loaded PIDRAMP file missing some expected keys.')
-                except Exception:
-                    pass
-
+                self._safe_emit(self.warning_occurred, 'Loaded PIDRAMP file missing some expected keys.')
             return True
         except Exception as e:
             # 转发错误到 UI
-            try:
-                self.error_occurred.emit(f'Failed to load PIDRAMP: {e}')
-            except Exception:
-                pass
+            self._safe_emit(self.error_occurred, f'Failed to load PIDRAMP: {e}')
             raise
