@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         right_panel = self._create_right_panel()
 
 
+        left_panel.setFixedWidth(420)
         right_panel.setMinimumWidth(600)        
         main_layout.addWidget(left_panel)
         main_layout.addWidget(right_panel, 1)
