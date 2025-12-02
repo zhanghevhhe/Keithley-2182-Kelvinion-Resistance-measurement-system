@@ -68,7 +68,6 @@ class MainWindow(QMainWindow):
         right_panel = self._create_right_panel()
 
 
-        left_panel.setFixedWidth(400)
         right_panel.setMinimumWidth(600)        
         main_layout.addWidget(left_panel)
         main_layout.addWidget(right_panel, 1)
@@ -443,15 +442,23 @@ class MainWindow(QMainWindow):
             block.check_edited(is_currently_executing=is_currently_executing)
 
     def set_ui_locked(self, is_running):
+        # 运行/停止键状态更新
         self.run_stop_btn.setEnabled(True)
         self.run_stop_btn.setChecked(is_running)
         self._update_run_stop_button_style(is_running)
+        # 界面静态组件
         for widget in self.lockable_widgets:
             widget.setEnabled(not is_running)
+        # 温度块内的控件
         for block in getattr(self, 'temp_blocks', []):
+            # 输入文本框
             for w in [block.start, block.stop, block.step, block.ramp]:
                 w.setReadOnly(is_running)
+            # 中止按钮
             block.end_checkbox.setEnabled(not is_running)
+            # 删除按钮
+            if hasattr(block, 'delete_btn'):
+                block.delete_btn.setEnabled(not is_running)
         self.run_stop_btn.setStyleSheet("")
 
     def plot_data_batch(self, data_by_ch, clear=True):
@@ -551,6 +558,39 @@ class MainWindow(QMainWindow):
         block = TempBlockWidget()
         self.temp_blocks.append(block)
         layout.addWidget(block)
+        # 连接删除按钮：由主界面负责从布局和列表中移除控件
+        if hasattr(block, 'delete_btn'):
+            def _connect_delete(b):
+                def on_delete():
+                    # 在布局中查找并移除该块及其前置分隔线（如果有）
+                    for i in range(self.temp_blocks_layout.count()):
+                        item = self.temp_blocks_layout.itemAt(i)
+                        w = item.widget() if item is not None else None
+                        if w is b:
+                            taken = self.temp_blocks_layout.takeAt(i)
+                            if taken and taken.widget():
+                                taken.widget().deleteLater()
+                            # 如果前一个是分隔线则一并删除
+                            if i-1 >= 0:
+                                prev_item = self.temp_blocks_layout.itemAt(i-1)
+                                if prev_item and prev_item.widget() and isinstance(prev_item.widget(), QFrame):
+                                    prev_taken = self.temp_blocks_layout.takeAt(i-1)
+                                    if prev_taken and prev_taken.widget():
+                                        prev_taken.widget().deleteLater()
+                            break
+                    # 从内部列表移除
+                    try:
+                        self.temp_blocks.remove(b)
+                    except ValueError:
+                        pass
+                    # 确保末尾只有一个 stretch
+                    while self.temp_blocks_layout.count() and isinstance(self.temp_blocks_layout.itemAt(self.temp_blocks_layout.count()-1).widget(), type(None)):
+                        self.temp_blocks_layout.takeAt(self.temp_blocks_layout.count()-1)
+                    self.temp_blocks_layout.addStretch()
+                    # 更新锁定状态确保界面一致
+                    self.set_ui_locked(self.run_stop_btn.isChecked())
+                return on_delete
+            block.delete_btn.clicked.connect(_connect_delete(block))
         # 添加分隔线（除了第一个块）
         if len(self.temp_blocks) > 1:
             line = QFrame()

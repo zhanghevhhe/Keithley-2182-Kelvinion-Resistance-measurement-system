@@ -122,18 +122,24 @@ class KelvinionController:
         print(f"[Kelvinion] Set sample temperature: {target}")
 
     def set_sample_range(self, target: float):
-        for entry in self.pidramp["sample_range"]:
-            if entry["min"] <= target < entry["max"]:
-                self._safe_write(f"[SET:RANGE:A:{entry['range']}]")
-                print(f"[Kelvinion] Set sample range: {entry['range']}")
-                break
+        with self._lock:
+            self.inst.write("[SET:RANGE:A:OFF]")
+            time.sleep(0.05)
+            for entry in self.pidramp["sample_range"]:
+                if entry["min"] <= target < entry["max"]:
+                    self.inst.write(f"[SET:RANGE:A:{entry['range']}]")
+                    print(f"[Kelvinion] Set sample range: {entry['range']}")
+                    break
 
     def set_chamber_range(self, target: float):
-        for entry in self.pidramp["chamber_range"]:
-            if entry["min"] <= target < entry["max"]:
-                self._safe_write(f"[SET:RANGE:B:{entry['range']}]")
-                print(f"[Kelvinion] Set chamber range: {entry['range']}")
-                break
+        with self._lock:
+            self.inst.write(f"[SET:RANGE:B:OFF]")
+            time.sleep(0.05)
+            for entry in self.pidramp["chamber_range"]:
+                if entry["min"] <= target < entry["max"]:
+                    self.inst.write(f"[SET:RANGE:B:{entry['range']}]")
+                    print(f"[Kelvinion] Set chamber range: {entry['range']}")
+                    break
 
     def set_temperature(self, target: float, loop: str = 'A', ramp_override: float = None):
         """

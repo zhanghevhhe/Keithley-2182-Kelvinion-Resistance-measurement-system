@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import QFileDialog, QMessageBox, QDialog
 
 def lowerT(temp_a):
     """根据回路 A 的温度计算回路 B 的目标温度（降低约10K，但不低于2K）。"""
-    lowered = temp_a * 0.968 -2
+    lowered = temp_a - 20
     return lowered if lowered > 1 else 1
 
 
@@ -109,13 +109,11 @@ class MeasurementWorker(QObject):
                 self.update_set_temp.emit(temp_point)
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Setting temperature to {temp_point:.2f} K...")
 
-                if self.msys.kelvinion:
+                self.msys.kelvinion.set_temperature(temp_point, 'A', ramp_override=block.get('ramp', None))
+                self.msys.kelvinion.set_temperature(lowerT(temp_point), 'B')
 
-                    self.msys.kelvinion.set_temperature(temp_point, 'A', ramp_override=block.get('ramp', None))
-                    self.msys.kelvinion.set_temperature(lowerT(temp_point), 'B')
-
-                    self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Waiting for temperature to stabilize at {temp_point:.2f} K...")
-                    self.msys.kelvinion.wait_for_stable(temp_point, is_running_checker=lambda: self._is_running)
+                self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Waiting for temperature to stabilize at {temp_point:.2f} K...")
+                self.msys.kelvinion.wait_for_stable(temp_point, is_running_checker=lambda: self._is_running)
 
                 if not self._is_running:
                     break
@@ -449,13 +447,12 @@ class AppController(QObject):
             return
 
         try:
-            if kelvinion:
-                kelvinion.set_temperature(temp, loop='A', ramp_override=ramp)
-                kelvinion.set_temperature(lowerT(temp), loop='B', ramp_override=None)
-                try:
-                    model.current_temp_changed.emit(temp)
-                except Exception:
-                    pass
+            kelvinion.set_temperature(temp, loop='A', ramp_override=ramp)
+            kelvinion.set_temperature(lowerT(temp), loop='B', ramp_override=None)
+            try:
+                model.current_temp_changed.emit(temp)
+            except Exception:
+                pass
         except Exception as e:
             msg = f"[Controller] set_manual_temperature failed: {e}"
             print(msg)

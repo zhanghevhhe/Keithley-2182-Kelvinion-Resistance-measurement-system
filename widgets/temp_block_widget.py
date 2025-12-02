@@ -2,7 +2,7 @@
 """
 temp_block_widget.py: Defines the TempBlockWidget, a custom widget for a single temperature sequence block.
 """
-from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QCheckBox
+from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QCheckBox, QPushButton
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFocusEvent
 
@@ -37,8 +37,8 @@ class TempBlockWidget(QFrame):
         # 创建输入框并设置缺省值
         self.start = self._create_line_edit_with_default('start', 40)
         self.stop = self._create_line_edit_with_default('stop', 40)
-        self.step = self._create_line_edit_with_default('step', 35)
-        self.ramp = self._create_line_edit_with_default('ramp', 35)
+        self.step = self._create_line_edit_with_default('step', 30)
+        self.ramp = self._create_line_edit_with_default('ramp', 30)
         self.end_checkbox = QCheckBox(); self.end_checkbox.setFixedSize(min_h, min_h)
         self.end_checkbox.setStyleSheet("""
             QCheckBox::indicator {
@@ -56,6 +56,12 @@ class TempBlockWidget(QFrame):
             }
         """)
 
+        self.delete_btn = QPushButton("X"); self.delete_btn.setFixedSize(min_h, min_h)
+        self.delete_btn.setEnabled(True)
+        self.delete_btn.setStyleSheet("QPushButton { background-color: #ffdddd; border: 1px solid #d97979; padding: 0px; }")
+
+
+
         layout.addWidget(create_label("START"))
         layout.addWidget(self.start)
         layout.addWidget(create_label("STOP"))
@@ -66,7 +72,10 @@ class TempBlockWidget(QFrame):
         layout.addWidget(self.ramp)
         layout.addWidget(create_label("END"))
         layout.addWidget(self.end_checkbox, 0, Qt.AlignVCenter)
+        layout.addWidget(self.delete_btn, 0, Qt.AlignVCenter)
+
         self.setLayout(layout)
+
         for w in [self.start, self.stop, self.step, self.ramp]:
             w.textChanged.connect(lambda: self.check_edited())
         self.end_checkbox.stateChanged.connect(lambda: self.check_edited())
