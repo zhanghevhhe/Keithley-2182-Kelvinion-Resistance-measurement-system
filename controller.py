@@ -84,11 +84,11 @@ class MeasurementWorker(QObject):
         except Exception:
             pass
 
-    def _handle_sweep(self, snapshot, temp_point):
+    def _handle_sweep(self, snapshot, temp_point, chosen = 'CH1' ):
         """Perform IV sweep for a single chosen channel from snapshot.
         Handles all sweep measurement, data collection, and signal emission directly.
         """
-        chosen = 'CH1' 
+        
         # 如果 snapshot 中没有 CH1，则说明 CH1 未启用，直接跳过
         if not any(ch == chosen for ch, _, _, _ in snapshot):
             self.progress.emit(f"{chosen} not enabled for sweep; skipping.")
@@ -115,7 +115,7 @@ class MeasurementWorker(QObject):
                 if not self._is_running:
                     break
                 try:
-                    v = self.msys.k6221.sweep_onestep(cur)
+                    v = self.msys.k6221.measure_dc_current(cur)
                 except Exception as e:
                     print(f"[Sweep] sweep_onestep error for {chosen} at I={cur}: {e}")
                     v = float('nan')
