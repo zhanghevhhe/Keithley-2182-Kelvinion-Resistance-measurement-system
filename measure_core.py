@@ -236,15 +236,7 @@ class Keithley6221:
         time.sleep(0.01)
         return float(self.inst.read())
 
-    def sweep_onestep(self, current, Vrange='10mV'):
-        if Vrange == '10mV':
-            V = '0.01'
-        elif Vrange == '100mV':
-            V = '0.1'
-        elif Vrange == '1V':
-            V = '1'
-        elif Vrange == '10V':
-            V = '10'
+    def sweep_onestep(self, current):
         self.inst.write('*RST')
         self.inst.write('*CLS')        
         self.inst.write('OUTPut:LTEarth OFF')
@@ -252,20 +244,20 @@ class Keithley6221:
         self.inst.write('UNIT:VOLT:DC V')
         self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:LPAS OFF"')
         self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:WIND 0.01"')
-        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:COUN 13"')
+        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:COUN 5"')
         self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:TCON MOV"')
         self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:STAT ON"')
         self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:NPLC 5"')
-        self.inst.write(f'SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:RANG {V}"')
+        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:RANG:AUTO ON"')
         self.inst.write('CURR:COMP 25')
-        self.inst.write('SOUR:CURR:RANG:AUTO ON')
-        self.inst.write(f':SOUR:CURR:{current:.3e}')
+        self.inst.write(':SOUR:CURR:RANG:AUTO ON')
+        self.inst.write(f':SOUR:CURR {current:.3e}')
         self.inst.write('OUTPUT ON')
         self.inst.write('*OPC')
         time.sleep(1.2)
-        v = self.reading_latest()
-        self.inst.write('OUTPUT OFF')
-        return v
+        res = self.reading_latest()
+        print(f"[6221] Sweep one step I={current:.3e} A, V={res:.6e} V")
+        return res
     
     def delta_measure(self, current, Vrange='10mV'):
         if Vrange == '10mV':

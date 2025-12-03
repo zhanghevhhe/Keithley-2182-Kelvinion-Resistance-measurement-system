@@ -115,7 +115,7 @@ class MeasurementWorker(QObject):
                 if not self._is_running:
                     break
                 try:
-                    v = self.msys.k6221.sweep_onestep(cur, vrange)
+                    v = self.msys.k6221.sweep_onestep(cur)
                 except Exception as e:
                     print(f"[Sweep] sweep_onestep error for {chosen} at I={cur}: {e}")
                     v = float('nan')
