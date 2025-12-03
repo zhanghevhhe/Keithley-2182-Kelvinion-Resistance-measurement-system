@@ -58,7 +58,7 @@ class MeasurementWorker(QObject):
             
             points.extend(np.arange(start, stop, step, dtype=float).tolist())
 
-            if not points.size or not np.isclose(points[-1], stop):
+            if len(points)==0 or not np.isclose(points[-1], stop):
                 if (step > 0 and stop >= start) or \
                    (step < 0 and stop <= start):
                     points.append(stop)
@@ -68,7 +68,7 @@ class MeasurementWorker(QObject):
         """获取所有将要测量的温度点，用于预先打印调试。"""
         all_temps = []
         for block in self.sequence:
-            temps_in_block = self._linear_generate(block['start'], block['stop'], block['step'])
+            temps_in_block = self._linear_generate(float(block['start']), float(block['stop']), float(block['step']))
             all_temps.extend(temps_in_block)
             if block.get('end', False):
                 break
@@ -88,7 +88,7 @@ class MeasurementWorker(QObject):
                 break
 
             self.block_changed.emit(i)
-            temp_points_in_block = self._linear_generate(block['start'], block['stop'], block['step'])
+            temp_points_in_block = self._linear_generate(float(block['start']), float(block['stop']), float(block['step']))
 
             if not temp_points_in_block:
                 self.progress.emit(f"Block {i+1}: Invalid parameters or empty sequence. Skipping.")
