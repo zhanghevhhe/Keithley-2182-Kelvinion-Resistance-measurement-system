@@ -40,6 +40,8 @@ class MainWindow(QMainWindow):
     - 数据保存路径设置
     - 实时数据图表显示
     - 手动温度设置
+    - 通道配置
+    - PID配置管理
     """
     def __init__(self, controller):
         super().__init__()
@@ -237,8 +239,6 @@ class MainWindow(QMainWindow):
         pid_btn_row.addWidget(self.apply_pid_btn)
         bottom_layout.addLayout(pid_btn_row)
 
-
-        
         layout.addWidget(bottom_widget)
         
         return container
@@ -338,9 +338,17 @@ class MainWindow(QMainWindow):
         container = QWidget()
         layout = QVBoxLayout(container)
         
+        # 使用 Tab 控件在右侧切换不同功能页（Resistance / SweepIV）
+        from PyQt5.QtWidgets import QTabWidget
+
+        self.tab_widget = QTabWidget()
+
+        # --- Resistance Tab （原有四图布局） ---
+        res_tab = QWidget()
+        res_layout = QVBoxLayout(res_tab)
         self.plot_grid = pg.GraphicsLayoutWidget()
         self.plot_grid.setBackground('#fcfcfc')
-        layout.addWidget(self.plot_grid)
+        res_layout.addWidget(self.plot_grid)
         self.plot_items = {}
         ch_names = list(self.controller.model.channels.keys())
         plot_positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
@@ -349,7 +357,6 @@ class MainWindow(QMainWindow):
             color = self.controller.model.channels[ch].get('color', '#808080')
             plot = self.plot_grid.addPlot(row=pos[0], col=pos[1])
             plot.setMenuEnabled(True)
-            # 极简扁平风网格
             plot.showGrid(x=True, y=True, alpha=0.7)
             plot.showAxis('top'); plot.showAxis('right')
             plot.getAxis('top').setStyle(showValues=False)
@@ -363,10 +370,51 @@ class MainWindow(QMainWindow):
             plot.getViewBox().setBackgroundColor('#fcfcfc')
             plot.getViewBox().setBorder(None)
             plot.getViewBox().setMouseMode(pg.ViewBox.RectMode)
-            # 标题/标签
             plot.setLabel('bottom', '<span style="color:#222; font-family: Segoe UI; font-size: 11pt; font-weight:600;">Temp [K]</span>')
             self.plot_items[ch] = plot
         self.update_plot_titles()
+
+        # --- SweepIV Tab ---
+        sweep_tab = QWidget()
+        sweep_layout = QVBoxLayout(sweep_tab)
+        sweep_layout.setContentsMargins(20, 20, 20, 20)
+        sweep_layout.setSpacing(10)
+        # Sweep plot (横轴为 Voltage, 纵轴为 Current)
+        self.sweep_plot = pg.PlotWidget()
+        self.sweep_plot.setBackground('#fcfcfc')
+        self.sweep_plot.showGrid(x=True, y=True)
+        self.sweep_plot.setLabel('bottom', 'Voltage [V]')
+        self.sweep_plot.setLabel('left', 'Current [A]')
+        self.sweep_plot.setMinimumHeight(280)
+        sweep_layout.addWidget(self.sweep_plot, 1)
+
+        # --- Sweep 参数（直接展示，无边框容器，位于图下方） ---
+        sweep_params_widget = QWidget()
+        sweep_params_layout = QHBoxLayout(sweep_params_widget)
+        sweep_params_layout.setContentsMargins(0, 0, 0, 0)
+        sweep_params_layout.setSpacing(8)
+        sweep_params_layout.addWidget(QLabel('Start I [A]:'))
+        self.sweep_start_edit = QLineEdit('1e-6'); self.sweep_start_edit.setFixedWidth(90)
+        sweep_params_layout.addWidget(self.sweep_start_edit)
+        sweep_params_layout.addWidget(QLabel('Stop I [A]:'))
+        self.sweep_stop_edit = QLineEdit('1e-3'); self.sweep_stop_edit.setFixedWidth(90)
+        sweep_params_layout.addWidget(self.sweep_stop_edit)
+        sweep_params_layout.addWidget(QLabel('Step I [A]:'))
+        self.sweep_step_edit = QLineEdit('1e-6'); self.sweep_step_edit.setFixedWidth(90)
+        sweep_params_layout.addWidget(self.sweep_step_edit)
+        sweep_params_layout.addStretch()
+        sweep_layout.addWidget(sweep_params_widget)
+
+        self.tab_widget.addTab(res_tab, 'Resistance')
+        self.tab_widget.addTab(sweep_tab, 'SweepIV')
+
+        # Sweep 绘图状态：图例、颜色映射、已绘制曲线引用
+        self.sweep_legend = None
+        self.sweep_color_map = {}
+        self.sweep_color_index = 0
+        self.sweep_traces = {}
+
+        layout.addWidget(self.tab_widget)
         return container
 
     def update_sample_temp_display(self, temp):
@@ -421,6 +469,129 @@ class MainWindow(QMainWindow):
 
     def update_set_temp_display(self, temp):
         self.set_temp_edit.setText(f"{temp:.3f}")
+
+    def get_mode(self):
+        """返回当前右侧选中的模式：'Resistance' 或 'SweepIV'"""
+        idx = self.tab_widget.currentIndex()
+        return 'Resistance' if idx == 0 else 'SweepIV'
+
+    def get_sweep_params(self):
+        """从 SweepIV 选项卡读取起始/结束/步长电流参数，返回 dict。"""
+        try:
+            start = float(self.sweep_start_edit.text())
+            stop = float(self.sweep_stop_edit.text())
+            step = float(self.sweep_step_edit.text())
+        except Exception:
+            return None
+        return {'start': start, 'stop': stop, 'step': step}
+
+    def handle_new_sweep(self, temp, ch_name, currents, voltages):
+        """在 SweepIV 选项卡上绘制新的一次 IV 扫描结果。
+        Args:
+            temp (float): 当前温度
+            ch_name (str): 通道名
+            currents (list[float]): 电流序列
+            voltages (list[float]): 对应电压序列
+        """
+        try:
+            # 使用显示温度作为图例标签
+            label = f"{temp:.3f} K"
+
+            # 颜色分配：相同温度使用相同颜色，按插入顺序分配新颜色
+            if label in self.sweep_color_map:
+                color = self.sweep_color_map[label]
+            else:
+                # 生成一个可辨识的颜色
+                color = pg.intColor(self.sweep_color_index, hues=12, values=255)
+                self.sweep_color_map[label] = color
+                self.sweep_color_index += 1
+
+            pen = pg.mkPen(color=color, width=2)
+
+            # 创建图例（只创建一次）
+            try:
+                if self.sweep_legend is None:
+                    self.sweep_legend = self.sweep_plot.addLegend(offset=(10, 10))
+            except Exception:
+                # 如果图例创建失败，也不要影响绘图
+                self.sweep_legend = None
+
+            # 绘制：x=Voltage, y=Current。使用 name 参数让图例自动关联曲线
+            pdi = self.sweep_plot.plot(voltages, currents, pen=pen, symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
+            # 保存曲线引用以便未来扩展（例如更新单条曲线）
+            self.sweep_traces[label] = pdi
+
+            # 标题显示通道信息，图例记录温度信息
+            self.sweep_plot.setTitle(f"IV Sweep - {ch_name}")
+        except Exception as e:
+            print(f"[GUI] handle_new_sweep error: {e}")
+
+    def handle_new_sweep_point(self, temp, ch_name, current, voltage):
+        """逐点追加 IV 点到当前温度对应的曲线。"""
+        try:
+            label = f"{temp:.3f} K"
+            # 颜色确保一致
+            if label in self.sweep_color_map:
+                color = self.sweep_color_map[label]
+            else:
+                color = pg.intColor(self.sweep_color_index, hues=12, values=255)
+                self.sweep_color_map[label] = color
+                self.sweep_color_index += 1
+
+            # 如果已有曲线，追加数据；否则创建新曲线
+            if label in self.sweep_traces:
+                pdi = self.sweep_traces[label]
+                try:
+                    x, y = pdi.getData()
+                    if x is None or y is None:
+                        x_list = [voltage]
+                        y_list = [current]
+                    else:
+                        # getData 可能返回 numpy arrays 或 lists
+                        x_list = list(x) + [voltage]
+                        y_list = list(y) + [current]
+                except Exception:
+                    x_list = [voltage]
+                    y_list = [current]
+                # 更新已有曲线的数据
+                try:
+                    pdi.setData(x_list, y_list)
+                except Exception:
+                    # fallback: 重新绘制这条曲线
+                    pdi = self.sweep_plot.plot(x_list, y_list, pen=pg.mkPen(color=color, width=2), symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
+                    self.sweep_traces[label] = pdi
+            else:
+                # 创建图例（若尚未创建）
+                try:
+                    if self.sweep_legend is None:
+                        self.sweep_legend = self.sweep_plot.addLegend(offset=(10, 10))
+                except Exception:
+                    self.sweep_legend = None
+
+                pdi = self.sweep_plot.plot([voltage], [current], pen=pg.mkPen(color=color, width=2), symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
+                self.sweep_traces[label] = pdi
+
+            # 保持标题为通道信息
+            try:
+                self.sweep_plot.setTitle(f"IV Sweep - {ch_name}")
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[GUI] handle_new_sweep_point error: {e}")
+    def clear_sweep_plot(self):
+        """清空 sweep 图、重置图例和颜色映射。"""
+        try:
+            self.sweep_plot.clear()
+        except Exception:
+            pass
+        try:
+            # 如果有 legend 对象，尝试移除其图形项（pyqtgraph 没有直接删除 legend 的 API，重新创建 plot 时 legend 会被清空）
+            self.sweep_legend = None
+            self.sweep_color_map.clear()
+            self.sweep_color_index = 0
+            self.sweep_traces.clear()
+        except Exception:
+            pass
 
     def update_running_status(self, is_running):
         self.run_status_lamp.setChecked(is_running)
