@@ -612,6 +612,12 @@ class MainWindow(QMainWindow):
         # 界面静态组件
         for widget in self.lockable_widgets:
             widget.setEnabled(not is_running)
+        # 右侧选项卡在系统运行时应被锁定（不能切换模式）
+        try:
+            if hasattr(self, 'tab_widget') and self.tab_widget is not None:
+                self.tab_widget.setEnabled(not is_running)
+        except Exception:
+            pass
         # 温度块内的控件
         for block in getattr(self, 'temp_blocks', []):
             # 输入文本框
