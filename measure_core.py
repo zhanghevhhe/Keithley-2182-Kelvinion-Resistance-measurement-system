@@ -223,7 +223,6 @@ class Keithley6221:
     1. PC -> GPIB -> 6221
     2. 6221 -> RS232 + Trigger Link -> 2182
     """
-
     def __init__(self, resource):
         """
         :param resource: pyvisa resource object (已经打开的资源实例)
@@ -281,7 +280,7 @@ class Keithley6221:
             print(f"Error reading data: {e}")
             raise
 
-    def measure_dc_current(self, current, compliance=25, nplc=5, reset_before=True):
+    def measure_dc_current(self, current, compliance=25, nplc=5, reset_before=True, delay_s=1.2):
         """
         执行单点 DC 电流输出并测量电压 (Sweep One Step)
         
@@ -289,6 +288,7 @@ class Keithley6221:
         :param compliance: 顺从电压 (Volt)
         :param nplc: 积分周期 (Number of Power Line Cycles), 5 是慢速高精度
         :param reset_before: 是否在测量前执行完整复位 (如果是扫描循环，建议设为 False 以提高速度)
+        :param delay_s: 输出电流稳定等待时间（秒）
         """
         if reset_before:
             self.reset()
@@ -300,23 +300,19 @@ class Keithley6221:
         # 设置 6221 输出
         self.inst.write(f'CURR:COMP {compliance}')
         self.inst.write(':SOUR:CURR:RANG:AUTO ON')
+        self.inst.write(f'SOUR:DEL {delay_s}') 
         self.inst.write(f':SOUR:CURR {current:.3e}')
         
-        # 开启输出并等待
+        # 开启输出
         self.inst.write('OUTPUT ON')
-        
-        # 使用 *OPC? 同步是一个好习惯，但对于电流源建立稳定，硬延时有时更可靠
-        # 这里的延时取决于负载电容和电感，1.2s 是原代码的保守值
-        time.sleep(1.2) 
+        self.inst.query('*OPC?') 
         
         try:
+            # 此时读取的 LATEST 读数是稳定后的第一个或最新读数，更加可靠
             voltage = self.get_reading(mode='LATEST')
             print(f"[DC] I={current:.3e} A, V={voltage:.6e} V")
             return voltage
         finally:
-            # 无论是否报错，建议保持输出开启直到用户显式关闭，或者在这里关闭？
-            # 原代码没有关闭，但在 Sweep 逻辑中，通常希望保持输出。
-            # 如果是单点测量，通常测量完要关掉，这里为了安全，若是一次性调用建议关闭：
             if reset_before: 
                 self.inst.write('OUTPUT OFF')
 
@@ -358,6 +354,10 @@ class Keithley6221:
         
         # 启动 Delta
         print("[Delta] Arming and initiating Delta mode...")
+        
+        # *** 优化点 3: 清空 2182 测量缓冲区，确保平均值基于本次测量 ***
+        self._send_2182('TRAC:CLE') 
+        
         self.inst.write('SOURCE:DELTA:ARM')
         self.inst.write('INITIATE:IMMEDIATE')
 
@@ -365,7 +365,7 @@ class Keithley6221:
         time.sleep(duration)
         
         try:
-            # 读取 Delta 读数
+            # 读取 Delta 读数 (LATEST 是 2182 自动计算的平均值)
             voltage = self.get_reading(mode='LATEST')
         finally:
             # 停止 Delta 模式并关闭输出
@@ -382,7 +382,6 @@ class Keithley6221:
         except:
             pass
         # 注意：这里不关闭 resource，因为 resource 是外部传入的，应由外部关闭
-
 
 class SwitchMatrix3706:
     """
@@ -625,7 +624,7 @@ class MeasurementSystem(QObject):
                         msg = str(e)
                         print(f"[System] delta_measure attempt {attempt} failed for {ch_name}: {msg}")
                         # 在超时或通信错误时，尝试发送中止并稍后重试
-                        self.k6221.inst.write('SOURCE:SWEEP:ABORT')
+                        self.k6221.close()
                         time.sleep(backoff * attempt)
 
                 if last_exc is not None and voltage is None:
@@ -647,7 +646,7 @@ class MeasurementSystem(QObject):
             self._safe_emit(self.error_occurred, error_msg)
             # 如果 delta_measure 中途出错，尝试中止扫描
             try:
-                self.k6221.inst.write('SOURCE:SWEEP:ABORT')
+                self.k6221.close()
                 print("[K6221] Sent ABORT command due to error.")
             except Exception as abort_e:
                 print(f"Error sending ABORT command: {abort_e}")
