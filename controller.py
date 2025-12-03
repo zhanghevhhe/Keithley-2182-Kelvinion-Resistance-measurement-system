@@ -45,38 +45,30 @@ class MeasurementWorker(QObject):
         """请求停止正在运行的测量循环（由 controller 调用）。"""
         self._is_running = False
 
-    def _generate_temps_for_block(self, block):
-        """为一个温度块生成所有目标温度点。"""
-        try:
-            start_temp = float(block['start'])
-            stop_temp = float(block['stop'])
-            step_val = float(block['step'])
-        except (ValueError, TypeError, KeyError):
-            return []
+    def _linear_generate(self, start, stop, step):
 
-        temp_points = []
-        if step_val == 0:
-            temp_points.append(start_temp)
+        points = []
+        if step == 0:
+            points.append(start)
         else:
-            if start_temp > stop_temp:
-                step = -abs(step_val)
+            if start > stop:
+                step = -abs(step)
             else:
-                step = abs(step_val)
+                step = abs(step)
+            
+            points.extend(np.arange(start, stop, step, dtype=float).tolist())
 
-            points = np.arange(start_temp, stop_temp, step, dtype=float)
-            temp_points.extend(points.tolist())
-
-            if not points.size or not np.isclose(points[-1], stop_temp):
-                if (step > 0 and stop_temp >= start_temp) or \
-                   (step < 0 and stop_temp <= start_temp):
-                    temp_points.append(stop_temp)
-        return temp_points
+            if not points.size or not np.isclose(points[-1], stop):
+                if (step > 0 and stop >= start) or \
+                   (step < 0 and stop <= start):
+                    points.append(stop)
+        return points
 
     def _get_all_target_temps(self):
         """获取所有将要测量的温度点，用于预先打印调试。"""
         all_temps = []
         for block in self.sequence:
-            temps_in_block = self._generate_temps_for_block(block)
+            temps_in_block = self._linear_generate(block['start'], block['stop'], block['step'])
             all_temps.extend(temps_in_block)
             if block.get('end', False):
                 break
@@ -96,7 +88,7 @@ class MeasurementWorker(QObject):
                 break
 
             self.block_changed.emit(i)
-            temp_points_in_block = self._generate_temps_for_block(block)
+            temp_points_in_block = self._linear_generate(block['start'], block['stop'], block['step'])
 
             if not temp_points_in_block:
                 self.progress.emit(f"Block {i+1}: Invalid parameters or empty sequence. Skipping.")

@@ -119,24 +119,20 @@ class KelvinionController:
         print(f"[Kelvinion] Set sample temperature: {target}")
 
     def set_sample_range(self, target: float):
-        with self._lock:
-            self.inst.write("[SET:RANGE:A:OFF]")
-            time.sleep(0.05)
-            for entry in self.pidramp["sample_range"]:
-                if entry["min"] <= target < entry["max"]:
-                    self.inst.write(f"[SET:RANGE:A:{entry['range']}]")
-                    print(f"[Kelvinion] Set sample range: {entry['range']}")
-                    break
+        
+        for entry in self.pidramp["sample_range"]:
+            if entry["min"] <= target < entry["max"]:
+                self._safe_write(f"[SET:RANGE:A:{entry['range']}]")
+                print(f"[Kelvinion] Set sample range: {entry['range']}")
+                break
 
     def set_chamber_range(self, target: float):
-        with self._lock:
-            self.inst.write(f"[SET:RANGE:B:OFF]")
-            time.sleep(0.05)
-            for entry in self.pidramp["chamber_range"]:
-                if entry["min"] <= target < entry["max"]:
-                    self.inst.write(f"[SET:RANGE:B:{entry['range']}]")
-                    print(f"[Kelvinion] Set chamber range: {entry['range']}")
-                    break
+        
+        for entry in self.pidramp["chamber_range"]:
+            if entry["min"] <= target < entry["max"]:
+                self._safe_write(f"[SET:RANGE:B:{entry['range']}]")
+                print(f"[Kelvinion] Set chamber range: {entry['range']}")
+                break
 
     def set_temperature(self, target: float, loop: str = 'A', ramp_override: float = None):
         """
@@ -240,6 +236,37 @@ class Keithley6221:
         time.sleep(0.01)
         return float(self.inst.read())
 
+    def sweep_onestep(self, current, Vrange='10mV'):
+        if Vrange == '10mV':
+            V = '0.01'
+        elif Vrange == '100mV':
+            V = '0.1'
+        elif Vrange == '1V':
+            V = '1'
+        elif Vrange == '10V':
+            V = '10'
+        self.inst.write('*RST')
+        self.inst.write('*CLS')        
+        self.inst.write('OUTPut:LTEarth OFF')
+        self.inst.write('OUTPUT:ISHIELD OLOW')
+        self.inst.write('UNIT:VOLT:DC V')
+        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:LPAS OFF"')
+        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:WIND 0.01"')
+        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:COUN 13"')
+        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:TCON MOV"')
+        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:STAT ON"')
+        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:NPLC 5"')
+        self.inst.write(f'SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:RANG {V}"')
+        self.inst.write('CURR:COMP 25')
+        self.inst.write('SOUR:CURR:RANG:AUTO ON')
+        self.inst.write(f':SOUR:CURR:{current:.3e}')
+        self.inst.write('OUTPUT ON')
+        self.inst.write('*OPC')
+        time.sleep(1.2)
+        v = self.reading_latest()
+        self.inst.write('OUTPUT OFF')
+        return v
+    
     def delta_measure(self, current, Vrange='10mV'):
         if Vrange == '10mV':
             V = '0.01'
