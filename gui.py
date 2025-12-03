@@ -18,7 +18,7 @@ from controller import AppController
 import numpy as np
 
 # 导入其他模块模块
-from ui_utils import get_labview_style, create_run_icon, create_stop_icon, create_lock_icon, create_labview_folder_icon
+from ui_utils import get_labview_style, create_run_icon, create_stop_icon, create_labview_folder_icon
 from widgets.temp_block_widget import TempBlockWidget
 from dialogs.set_temp_dialog import SetTempDialog
 from dialogs.channel_config_dialog import ChannelConfigDialog
@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
     def __init__(self, controller):
         super().__init__()
         self.setWindowTitle("Low Temperature Measurement System")
-        self.resize(1280, 720)
+        self.resize(1400, 800)
         self.controller = controller
         self._setup_ui()
         self._connect_signals()
@@ -67,15 +67,11 @@ class MainWindow(QMainWindow):
         left_panel = self._create_left_panel()
         right_panel = self._create_right_panel()
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([400, 400])
-        splitter.handle(1).setDisabled(True)
-        left_panel.setFixedWidth(400)
-        right_panel.setMinimumWidth(600)
 
-        main_layout.addWidget(splitter)
+        left_panel.setFixedWidth(420)
+        right_panel.setMinimumWidth(600)        
+        main_layout.addWidget(left_panel)
+        main_layout.addWidget(right_panel, 1)
         # 定义可锁定的控件列表（运行时或手动锁定时禁用）
         self.lockable_widgets = [
             self.path_edit, self.path_btn,
@@ -99,11 +95,12 @@ class MainWindow(QMainWindow):
         - 设置温度输入框 -> 手动设置温度对话框
         """
         self.run_stop_btn.clicked.connect(self.controller.toggle_measurement)
-        self.lock_btn.clicked.connect(self.controller.toggle_lock)
         self.quit_btn.clicked.connect(self._on_quit_clicked)
         self.path_btn.clicked.connect(self.controller.choose_path)
+        
         self.add_block_btn.clicked.connect(self.controller.add_temp_block)
         self.clear_all_btn.clicked.connect(self.controller.clear_all_temp_blocks)
+
         self.channel_btn.clicked.connect(self.controller.open_channel_config)
 
         self.open_pid_btn.clicked.connect(self.controller.choose_pidramp_file)
@@ -165,16 +162,6 @@ class MainWindow(QMainWindow):
         self.run_stop_btn.setMinimumHeight(btn_height)
         self.run_stop_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        # LOCK按钮 - 锁定/解锁UI控件
-        self.lock_btn = QToolButton()
-        self.lock_btn.setText("LOCK")
-        self.lock_btn.setIcon(create_lock_icon())
-        self.lock_btn.setIconSize(icon_size)
-        self.lock_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.lock_btn.setCheckable(True)
-        self.lock_btn.setMinimumHeight(btn_height)
-        self.lock_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
         # QUIT按钮 - 退出应用程序
         self.quit_btn = QToolButton()
         self.quit_btn.setText("QUIT")
@@ -185,11 +172,9 @@ class MainWindow(QMainWindow):
         self.quit_btn.setStyleSheet("QToolButton {background-color: red;color: white;border: 1px solid red;}QToolButton:hover { background-color: pink; }QToolButton:pressed { background-color: darkred; }")
 
         btn_layout.addWidget(self.run_stop_btn)
-        btn_layout.addWidget(self.lock_btn)
         btn_layout.addWidget(self.quit_btn)
-
         layout.addLayout(btn_layout)
-        
+
         layout.addWidget(self._create_path_panel())
 
         # --- 中部 (拉伸填满) ---
@@ -448,20 +433,25 @@ class MainWindow(QMainWindow):
             # 重新应用样式，确保状态正确
             block.check_edited(is_currently_executing=is_currently_executing)
 
-    def set_ui_locked(self, is_manual_locked, is_running):
-        self.lock_btn.setChecked(is_manual_locked)
-        self.lock_btn.setEnabled(not is_running)
+    def set_ui_locked(self, is_running):
+        # 运行/停止键状态更新
         self.run_stop_btn.setEnabled(True)
         self.run_stop_btn.setChecked(is_running)
         self._update_run_stop_button_style(is_running)
+        # 界面静态组件
         for widget in self.lockable_widgets:
-            widget.setEnabled(not is_manual_locked and not is_running)
+            widget.setEnabled(not is_running)
+        # 温度块内的控件
         for block in getattr(self, 'temp_blocks', []):
+            # 输入文本框
             for w in [block.start, block.stop, block.step, block.ramp]:
-                w.setReadOnly(is_manual_locked or is_running)
-            block.end_checkbox.setEnabled(not is_manual_locked and not is_running)
+                w.setReadOnly(is_running)
+            # 中止按钮
+            block.end_checkbox.setEnabled(not is_running)
+            # 删除按钮
+            if hasattr(block, 'delete_btn'):
+                block.delete_btn.setEnabled(not is_running)
         self.run_stop_btn.setStyleSheet("")
-        self.lock_btn.setStyleSheet("")
 
     def plot_data_batch(self, data_by_ch, clear=True):
         """
@@ -560,6 +550,39 @@ class MainWindow(QMainWindow):
         block = TempBlockWidget()
         self.temp_blocks.append(block)
         layout.addWidget(block)
+        # 连接删除按钮：由主界面负责从布局和列表中移除控件
+        if hasattr(block, 'delete_btn'):
+            def _connect_delete(b):
+                def on_delete():
+                    # 在布局中查找并移除该块及其前置分隔线（如果有）
+                    for i in range(self.temp_blocks_layout.count()):
+                        item = self.temp_blocks_layout.itemAt(i)
+                        w = item.widget() if item is not None else None
+                        if w is b:
+                            taken = self.temp_blocks_layout.takeAt(i)
+                            if taken and taken.widget():
+                                taken.widget().deleteLater()
+                            # 如果前一个是分隔线则一并删除
+                            if i-1 >= 0:
+                                prev_item = self.temp_blocks_layout.itemAt(i-1)
+                                if prev_item and prev_item.widget() and isinstance(prev_item.widget(), QFrame):
+                                    prev_taken = self.temp_blocks_layout.takeAt(i-1)
+                                    if prev_taken and prev_taken.widget():
+                                        prev_taken.widget().deleteLater()
+                            break
+                    # 从内部列表移除
+                    try:
+                        self.temp_blocks.remove(b)
+                    except ValueError:
+                        pass
+                    # 确保末尾只有一个 stretch
+                    while self.temp_blocks_layout.count() and isinstance(self.temp_blocks_layout.itemAt(self.temp_blocks_layout.count()-1).widget(), type(None)):
+                        self.temp_blocks_layout.takeAt(self.temp_blocks_layout.count()-1)
+                    self.temp_blocks_layout.addStretch()
+                    # 更新锁定状态确保界面一致
+                    self.set_ui_locked(self.run_stop_btn.isChecked())
+                return on_delete
+            block.delete_btn.clicked.connect(_connect_delete(block))
         # 添加分隔线（除了第一个块）
         if len(self.temp_blocks) > 1:
             line = QFrame()
@@ -568,7 +591,7 @@ class MainWindow(QMainWindow):
             line.setStyleSheet("color: #d0d7de; background: #d0d7de; height: 0.5px; margin: 0;")
             layout.insertWidget(layout.count()-1, line)
         layout.addStretch()  # 重新添加stretch
-        self.set_ui_locked(self.lock_btn.isChecked(), self.run_stop_btn.isChecked())
+        self.set_ui_locked(self.run_stop_btn.isChecked())
 
     def clear_all_temp_blocks(self):
         # 移除所有widget和stretch
@@ -583,7 +606,7 @@ class MainWindow(QMainWindow):
         # 保证只有一个stretch
         if layout.count() == 0 or not isinstance(layout.itemAt(layout.count()-1).widget(), type(None)):
             layout.addStretch()
-        self.set_ui_locked(self.lock_btn.isChecked(), self.run_stop_btn.isChecked())
+        self.set_ui_locked(self.run_stop_btn.isChecked())
 
     def get_sequence_data(self):
         sequence_data = []

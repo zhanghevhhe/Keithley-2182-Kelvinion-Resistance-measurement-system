@@ -3,50 +3,50 @@
         {
             "min": 0,
             "max": 3,
-            "P": 50,
-            "I": 1
+            "P": 150,
+            "I": 5
         },
         {
             "min": 3,
             "max": 5,
-            "P": 80,
-            "I": 1
+            "P": 180,
+            "I": 8
         },
         {
             "min": 5,
             "max": 11,
-            "P": 80,
-            "I": 1
+            "P": 180,
+            "I": 10
         },
         {
             "min": 11,
             "max": 21,
-            "P": 80,
-            "I": 1
+            "P": 180,
+            "I": 12
         },
         {
             "min": 21,
             "max": 31,
-            "P": 100,
-            "I": 1
+            "P": 200,
+            "I": 15
         },
         {
             "min": 31,
             "max": 51,
-            "P": 100,
-            "I": 2
+            "P": 250,
+            "I": 18
         },
         {
             "min": 51,
             "max": 201,
-            "P": 110,
-            "I": 2
+            "P": 300,
+            "I": 20
         },
         {
             "min": 201,
-            "max": 311,
-            "P": 120,
-            "I": 2
+            "max": 350,
+            "P": 400,
+            "I": 24
         }
     ],
     "chamber_pid": [
@@ -54,7 +54,7 @@
             "min": 0,
             "max": 3,
             "P": 30,
-            "I": 1
+            "I": 2
         },
         {
             "min": 3,
@@ -83,35 +83,35 @@
         {
             "min": 31,
             "max": 51,
-            "P": 40,
+            "P": 50,
             "I": 2
         },
         {
             "min": 51,
             "max": 201,
-            "P": 40,
-            "I": 5
+            "P": 50,
+            "I": 2
         },
         {
             "min": 201,
-            "max": 311,
+            "max": 350,
             "P": 50,
-            "I": 10
+            "I": 2
         }
     ],
     "tolerance_ranges": [
         {
             "min": 0,
-            "max": 50,
+            "max": 51,
             "tolerance": 0.05
         },
         {
-            "min": 50,
-            "max": 300,
-            "tolerance": 0.08
+            "min": 51,
+            "max": 301,
+            "tolerance": 0.1
         },
         {
-            "min": 300,
+            "min": 301,
             "max": 1000,
             "tolerance": 0.1
         }
@@ -119,79 +119,79 @@
     "sample_ramp": [
         {
             "min": 0,
-            "max": 20,
+            "max": 21,
             "ramp": 4
         },
         {
-            "min": 20,
-            "max": 50,
+            "min": 21,
+            "max": 51,
             "ramp": 4
         },
         {
-            "min": 50,
-            "max": 300,
+            "min": 51,
+            "max": 301,
             "ramp": 4
         },
         {
-            "min": 300,
-            "max": 400,
+            "min": 301,
+            "max": 350,
             "ramp": 4
         }
     ],
     "chamber_ramp": [
         {
             "min": 0,
-            "max": 20,
+            "max": 21,
             "ramp": 4
         },
         {
-            "min": 20,
-            "max": 50,
+            "min": 21,
+            "max": 51,
             "ramp": 4
         },
         {
-            "min": 50,
-            "max": 300,
+            "min": 51,
+            "max": 301,
             "ramp": 4
         },
         {
-            "min": 300,
-            "max": 400,
+            "min": 301,
+            "max": 350,
             "ramp": 4
         }
     ],
     "sample_range": [
         {
             "min": 0,
-            "max": 20,
+            "max": 21,
             "range": "HIGH"
         },
         {
-            "min": 20,
-            "max": 50,
+            "min": 21,
+            "max": 51,
             "range": "HIGH"
         },
         {
-            "min": 50,
-            "max": 200,
+            "min": 51,
+            "max": 201,
             "range": "HIGH"
         },
         {
-            "min": 200,
-            "max": 300,
+            "min": 201,
+            "max": 350,
             "range": "HIGH"
         }
     ],
     "chamber_range": [
         {
             "min": 0,
-            "max": 20,
+            "max": 5,
             "range": "LOW"
         },
         {
-            "min": 20,
+            "min": 5,
             "max": 50,
-            "range": "LOW"
+            "range": "MED"
         },
         {
             "min": 50,
@@ -200,7 +200,7 @@
         },
         {
             "min": 200,
-            "max": 300,
+            "max": 350,
             "range": "HIGH"
         }
     ]
