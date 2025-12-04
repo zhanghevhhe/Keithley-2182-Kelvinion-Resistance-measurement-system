@@ -264,65 +264,99 @@ class Keithley6221:
         self._send_2182(f"VOLT:CHAN1:DFIL:COUN {count}")
         self._send_2182(f"VOLT:CHAN1:DFIL:WIND {window}")
         self._send_2182(f"VOLT:CHAN1:DFIL:TCON {filter_type}")
-        # 这里原本是 debug 级别，现在直接打印以便确认配置
         print(f"[2182] Filter configured: Count={count}, Window={window}")
 
-    def get_reading(self, mode='LATEST'):
+    def get_reading(self, mode='FETCH'):
         """
-        获取读数
-        :param mode: 'LATEST' (最近一次读数) 或 'FRESH' (等待新读数)
+        获取读数。
+        
+        :param mode: 读取模式，支持 'FETCH' (获取最新测量结果), 'LATEST' (获取最新存储读数), 
+                     或 'FRESH' (等待新的测量读数)。
+        :raises ValueError: 如果传入的 mode 无效。
         """
-        cmd = ':SENSe:DATA:LATest?' if mode.upper() == 'LATEST' else ':SENSe:DATA:FRESh?'
+        # 定义允许的模式及其对应的 SCPI 命令，提高健壮性
+        ALLOWED_MODES = {
+            'FETCH': ':FETC?',           # 获取 INIT/ARM 序列完成后的结果 (推荐用于同步测量)
+            'LATEST': ':SENSe:DATA:LATest?', # 获取存储器中最新的读数
+            'FRESH': ':SENSe:DATA:FRESh?'    # 请求新读数并等待其完成
+        }
+        
+        mode_upper = mode.upper()
+        
+        if mode_upper not in ALLOWED_MODES:
+            # 模式无效时抛出明确的错误
+            raise ValueError(f"Invalid reading mode '{mode}'. Must be one of: {', '.join(ALLOWED_MODES.keys())}")
+            
+        cmd = ALLOWED_MODES[mode_upper]
+        
         try:
-            raw_data = self.inst.query(cmd) # 使用 query 替代 write+read，更安全
+            raw_data = self.inst.query(cmd)
             # 数据格式通常是 "数值, 状态, ...", 我们只取第一个
             return float(raw_data.split(',')[0])
         except Exception as e:
-            print(f"Error reading data: {e}")
+            print(f"Error reading data using command '{cmd}': {e}")
             raise
 
-    def measure_dc_current(self, current, compliance=25, nplc=5, reset_before=True):
+    def measure_dc_current(self, current, compliance=25, nplc=5, delay_s=1.2):
         """
         执行单点 DC 电流输出并测量电压 (Sweep One Step)
         
+        *** 关键优化：采用 INIT + FETC? 确保读取的是新测量值 ***
+
         :param current: 输出电流 (Amp)
         :param compliance: 顺从电压 (Volt)
         :param nplc: 积分周期 (Number of Power Line Cycles), 5 是慢速高精度
-        :param reset_before: 是否在测量前执行完整复位 (如果是扫描循环，建议设为 False 以提高速度)
+        :param delay_s: 输出电流稳定等待时间（秒）。通过 SOUR:DELAY 实现，比 time.sleep 更可靠。
         """
-        if reset_before:
-            self.reset()
-            self.configure_system_common()
-            self.configure_2182_filter(count=5, window=0.01)
-            self._send_2182(f"VOLT:NPLC {nplc}")
-            self._send_2182("VOLT:RANG:AUTO ON")
+        # 1. 完整设置仪器状态
+        self.reset()
+        self.configure_system_common()
+        
+        # 配置 2182 (测量)
+        self._send_2182("VOLT:RANG:AUTO ON")
+        self._send_2182(f"VOLT:NPLC {nplc}")
+        self.configure_2182_filter(count=5, window=0.01)
 
-        # 设置 6221 输出
+        # 配置 6221 (源)
         self.inst.write(f'CURR:COMP {compliance}')
         self.inst.write(':SOUR:CURR:RANG:AUTO ON')
+        
+        # 设置电流和源延时（等待稳定时间）
         self.inst.write(f':SOUR:CURR {current:.3e}')
+        self.inst.write(f'SOUR:DEL {delay_s}') 
         
-        # 开启输出并等待
-        self.inst.write('OUTPUT ON')
+        # 2. 设置单点触发并打开输出
+        self.inst.write('TRIG:COUN 1') # 只触发一次测量
+        self.inst.write('TRIG:SOUR IMM') # 立即触发 (等待源稳定后即触发)
+        self.inst.write('OUTP ON') # 打开电流输出
         
-        # 使用 *OPC? 同步是一个好习惯，但对于电流源建立稳定，硬延时有时更可靠
-        # 这里的延时取决于负载电容和电感，1.2s 是原代码的保守值
-        time.sleep(1.2) 
+        # 3. 发起测量并等待完成
+        # INIT 命令等待 SOUR:DEL 完成后，驱动 2182 完成一次读数，然后阻塞。
+        print(f"[DC - Reliable] Initiating measurement I={current:.3e} A...")
+        self.inst.write('INIT')
+        
+        # *OPC? 确保 INITIATE 序列（源稳定+测量）完全完成。
+        self.inst.query('*OPC?') 
         
         try:
-            voltage = self.get_reading(mode='LATEST')
-            print(f"[DC] I={current:.3e} A, V={voltage:.6e} V")
+            # 4. 获取最新的、已完成的测量结果
+            # 这里强制使用 'FETCH' 模式
+            voltage = self.get_reading(mode='FETCH')
+            
+            print(f"[DC - Reliable] Measurement complete. V={voltage:.6e} V")
             return voltage
+        except Exception as e:
+            print(f"Error during DC measurement fetch: {e}")
+            raise
         finally:
-            # 无论是否报错，建议保持输出开启直到用户显式关闭，或者在这里关闭？
-            # 原代码没有关闭，但在 Sweep 逻辑中，通常希望保持输出。
-            # 如果是单点测量，通常测量完要关掉，这里为了安全，若是一次性调用建议关闭：
-            if reset_before: 
-                self.inst.write('OUTPUT OFF')
+            # 单点测量完成后，关闭输出是安全惯例
+            self.inst.write('OUTP OFF') 
 
     def measure_delta_mode(self, current, voltage_range=0.01, compliance=10, duration=5.0):
         """
         执行 Delta 模式测量 (正负电流交替消除热电势)
+        
+        *** 优化：TRAC:CLE 确保平均值基于本次测量 ***
         
         :param current: 电流幅值 (Amp)
         :param voltage_range: 2182 电压量程 (可以是字符串 '10mV' 或 浮点数 0.01)
@@ -358,14 +392,18 @@ class Keithley6221:
         
         # 启动 Delta
         print("[Delta] Arming and initiating Delta mode...")
+        
+        # 优化点: 清空 2182 测量缓冲区，确保平均值基于本次测量
+        self._send_2182('TRAC:CLE') 
+        
         self.inst.write('SOURCE:DELTA:ARM')
         self.inst.write('INITIATE:IMMEDIATE')
 
-        # 等待测量数据稳定
+        # 等待测量数据稳定，让 Delta 模式运行一段时间以进行充分的平均
         time.sleep(duration)
         
         try:
-            # 读取 Delta 读数
+            # 读取 Delta 读数 (LATEST 是 2182 自动计算的平均值)
             voltage = self.get_reading(mode='LATEST')
         finally:
             # 停止 Delta 模式并关闭输出
