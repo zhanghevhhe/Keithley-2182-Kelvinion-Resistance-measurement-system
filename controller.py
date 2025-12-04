@@ -509,28 +509,59 @@ class AppController(QObject):
     def _save_sweep_file(self, temp, ch_name, currents, voltages):
         """保存单次 IV sweep 到单独的 CSV 文件。"""
         try:
+            # 改为将 sweep 数据追加到用户指定的主数据文件（txt），而不是新建单独的 sweep 文件
             base_path = self.view.get_save_path() if self.view else None
             if not base_path:
-                base_dir = self.model.save_path
-                base_name = 'sweep_data'
-            else:
-                base_dir = os.path.dirname(base_path) or '.'
-                base_name = os.path.splitext(os.path.basename(base_path))[0]
-
-            filename = os.path.join(base_dir, f"{base_name}_Sweep_{ch_name}_{temp:.3f}.csv")
-            with open(filename, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                # 保存格式：Timestamp, Temperature[K], Voltage[V], Current[A]
-                writer.writerow(['Timestamp', 'Temperature[K]', 'Voltage[V]', 'Current[A]'])
-                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                for i, v in zip(currents, voltages):
-                    # note: currents list corresponds to current values, voltages to measured voltages
-                    writer.writerow([timestamp, f"{temp:.6f}", f"{v:.6e}", f"{i:.6e}"])
-            try:
+                # 如果没有指定路径，则退回为单独文件保存到 model.save_path
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                filename = os.path.join(base_dir, f"sweep_data_{ch_name}_{temp:.3f}.csv")
+                with open(filename, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['Timestamp', 'Temperature[K]', 'Voltage[V]', 'Current[A]'])
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    for cur, v in zip(currents, voltages):
+                        writer.writerow([timestamp, f"{temp:.6f}", f"{v:.6e}", f"{cur:.6e}"])
                 if self.view:
-                    self.view.update_progress(f"Saved sweep: {os.path.basename(filename)}")
-            except Exception:
-                pass
+                    try:
+                        self.view.update_progress(f"Saved sweep to: {os.path.basename(filename)}")
+                    except Exception:
+                        pass
+                return
+
+            # 如果用户指定了主数据文件，向该文件追加 sweep 数据块
+            try:
+                with open(base_path, 'a', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    # 写入一个可识别的 sweep 块头，便于后续解析
+                    writer.writerow([])
+                    writer.writerow([f"# SWEEP", f"Channel: {ch_name}", f"Temp[K]: {temp:.3f}"])
+                    writer.writerow(['Timestamp', 'Temperature[K]', 'Voltage[V]', 'Current[A]'])
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    for cur, v in zip(currents, voltages):
+                        writer.writerow([timestamp, f"{temp:.6f}", f"{v:.6e}", f"{cur:.6e}"])
+                if self.view:
+                    try:
+                        self.view.update_progress(f"Appended sweep to: {os.path.basename(base_path)}")
+                    except Exception:
+                        pass
+            except Exception as e:
+                # 如果追加失败，回退到单独文件保存
+                try:
+                    base_dir = os.path.dirname(base_path) or '.'
+                    filename = os.path.join(base_dir, f"sweep_fallback_{ch_name}_{temp:.3f}.csv")
+                    with open(filename, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(['Timestamp', 'Temperature[K]', 'Voltage[V]', 'Current[A]'])
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        for cur, v in zip(currents, voltages):
+                            writer.writerow([timestamp, f"{temp:.6f}", f"{v:.6e}", f"{cur:.6e}"])
+                    if self.view:
+                        try:
+                            self.view.update_progress(f"Saved sweep fallback: {os.path.basename(filename)}")
+                        except Exception:
+                            pass
+                except Exception:
+                    print(f"[Controller] Failed to save sweep data: {e}")
         except Exception as e:
             try:
                 if self.view:
