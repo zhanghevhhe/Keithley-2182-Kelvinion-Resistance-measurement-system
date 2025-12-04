@@ -574,14 +574,6 @@ class MeasurementSystem(QObject):
                 self.channels[ch_name] = ch_data
         self.save_channels_config()
 
-    def get_csv_header(self):
-        """动态生成CSV文件的表头。"""
-        header = ["Timestamp", "Temperature[K]"]
-        channel_names = sorted(self.channels.keys())
-        for ch_name in channel_names:
-            header.append(f"Resistance_{ch_name}[Ohm]")
-        return header
-
     def get_channel_info_for_display(self, channel_name):
         """[重构] 获取单个通道用于UI显示的信息（标题）。"""
         if channel_name not in self.channels:
@@ -599,8 +591,6 @@ class MeasurementSystem(QObject):
             "title": title,
             "enabled": is_enabled
         }
-
-
 
     def _update_hardware_temperatures(self):
         """
@@ -630,9 +620,6 @@ class MeasurementSystem(QObject):
             self._safe_emit(self.chamber_temp_changed, 0.0)
 
     def measure_single_channel(self, ch_name, channel_config):
-        # --- 使用你提供的 delta_measure 方法进行真实测量 ---
-        # 为避免多个并发测量导致仪器通信冲突和超时，使用系统级锁序列化对 matrix/k6221 的访问。
-        # 同时在 delta_measure 出现超时的情况下进行有限次数的重试。
         attempts = 3
         backoff = 0.5
         try:
