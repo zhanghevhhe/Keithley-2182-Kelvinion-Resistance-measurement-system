@@ -786,7 +786,7 @@ class MainWindow(QMainWindow):
             # 委托 controller 处理（controller 将负责同时写 A 和 B）
             try:
                 if hasattr(self, "controller") and hasattr(self.controller, "set_manual_temperature"):
-                    self.controller.set_manual_temperature(temp, ramp=ramp)
+                    self.controller.set_manual_temperature(temp, ramp)
                 else:
                     QMessageBox.warning(self, "未实现", "控制器未实现 set_manual_temperature 接口。")
             except Exception as e:

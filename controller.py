@@ -323,9 +323,15 @@ class AppController(QObject):
             self._update_ui_lock_state()
             return
 
-        # 只在文件不存在时写表头，存在就直接追加
+        # 读取运行模式（在写表头前确定），只在文件不存在时写表头
+        operation = 'Resistance'
+        try:
+            operation = self.view.get_mode()
+        except Exception:
+            pass
+
         if not os.path.exists(file_path):
-            self._write_header_to_file(file_path)
+            self._write_header_to_file(file_path, operation=operation)
 
         self.is_running = True
         self._update_ui_lock_state()
@@ -342,12 +348,7 @@ class AppController(QObject):
 
         # 创建 MeasurementWorker，并根据 UI 选择的模式传入 operation 与 sweep 参数
         self.measurement_thread = QThread()
-        operation = 'Resistance'
-        try:
-            operation = self.view.get_mode()
-        except Exception:
-            pass
-
+        
         sweep_params = None
         if operation == 'SweepIV':
             sweep_params = self.view.get_sweep_params() or {}
@@ -539,32 +540,43 @@ class AppController(QObject):
         self.model.set_save_path(file_path)
         self.view.update_plots_from_file(file_path)
 
-    def _write_header_to_file(self, file_path):
-        """向指定文件写入表头。"""
-        if self.operation == 'Resistance':
+    def _write_header_to_file(self, file_path, operation: str = None):
+        """向指定文件写入表头。
+
+        Args:
+            file_path: 目标文件路径
+            operation: 可选，'Resistance' 或 'SweepIV'，若未提供则从 view 获取
+        """
+        if operation is None:
             try:
+                operation = self.view.get_mode()
+            except Exception:
+                operation = 'Resistance'
+
+        try:
+            if operation == 'Resistance':
                 header = ["Timestamp", "Temperature[K]"]
                 channel_names = sorted(self.model.channels.keys())
                 for ch_name in channel_names:
                     header.append(f"Resistance_{ch_name}[Ohm]")
-                
-                with open(file_path, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(header)
-            except Exception as e:
-                QMessageBox.critical(self.view, "File Write Error", f"Error writing header to file:\n{e}")
 
-        elif self.operation == 'SweepIV':
-            try:
+            elif operation == 'SweepIV':
                 header = ['Timestamp', 'Temperature[K]', 'Voltage[V]', 'Current[A]']
+            else:
+                # 默认回退到 Resistance 表头
+                header = ["Timestamp", "Temperature[K]"]
+                channel_names = sorted(self.model.channels.keys())
+                for ch_name in channel_names:
+                    header.append(f"Resistance_{ch_name}[Ohm]")
 
-                with open(file_path, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(header)
-            except Exception as e:
+            with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+        except Exception as e:
+            try:
                 QMessageBox.critical(self.view, "File Write Error", f"Error writing header to file:\n{e}")
-        else:
-            QMessageBox.warning(self.view, "Unknown Operation", f"Unknown operation mode: {self.operation}. Header not written.")
+            except Exception:
+                print(f"[Controller] Error writing header to file: {e}")
 
     def get_save_path(self):
         """为View提供获取初始保存路径的方法。"""
