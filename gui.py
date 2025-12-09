@@ -619,12 +619,15 @@ class MainWindow(QMainWindow):
                 if not header or len(header) < 3:
                     return
                 temp_idx = 1
-                ch_indices = {}
+                ch_indices = {'CH1':2, 'CH2':3, 'CH3':4, 'CH4':5}
                 for i, h in enumerate(header):
+                    if h == 'Temperature[K]':
+                        temp_idx = i
                     if h.startswith('Resistance_'):
                         ch_name = h.split('_')[1].split('[')[0]
                         ch_indices[ch_name] = i
                 data_by_ch = {ch: {'x': [], 'y': []} for ch in ch_indices}
+                print(ch_indices)
                 for row in reader:
                     if len(row) < max(ch_indices.values())+1:
                         continue
@@ -632,7 +635,7 @@ class MainWindow(QMainWindow):
                         temp = float(row[temp_idx])
                         for ch, idx in ch_indices.items():
                             val = row[idx]
-                            if 'X' in val or val.strip() == '':
+                            if val == '0.000000E0' or val.strip() == '':
                                 continue
                             y = float(val)
                             data_by_ch[ch]['x'].append(temp)
