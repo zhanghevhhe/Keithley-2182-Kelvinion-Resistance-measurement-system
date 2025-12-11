@@ -84,16 +84,20 @@ class MeasurementWorker(QObject):
         except Exception:
             pass
 
-    def _handle_sweep(self, snapshot, temp_point, chosen = 'CH1' ):
+    def _handle_sweep(self, snapshot, temp_point):
         """Perform IV sweep for a single chosen channel from snapshot.
         Handles all sweep measurement, data collection, and signal emission directly.
         """
-        
-        # 如果 snapshot 中没有 CH1，则说明 CH1 未启用，直接跳过
+        # 从 sweep_params 中读取用户选择的通道（UI 中可选 CH1..CH4）
+        try:
+            chosen = str(self.sweep_params.get('channel', 'CH1'))
+        except Exception:
+            chosen = 'CH1'
+
+        # 如果 snapshot 中没有所选通道，则说明该通道未启用，直接跳过
         if not any(ch == chosen for ch, _, _, _ in snapshot):
             self.progress.emit(f"{chosen} not enabled for sweep; skipping.")
             return
-        vrange = next((vr for ch, _, _, vr in snapshot if ch == chosen), '10mV')
 
         # build current sequence from sweep_params
         try:
@@ -120,13 +124,12 @@ class MeasurementWorker(QObject):
                     print(f"[Sweep] sweep_onestep error for {chosen} at I={cur}: {e}")
                     v = float('nan')
                 voltages.append(v)
-                # 逐点发射，用于实时绘图（每得到一点就更新界面），使用设定温度作为标签
+                # 逐点发射，用于实时绘图与增量保存（使用设定温度作为标签）
                 try:
                     self.new_sweep_point.emit(temp, chosen, cur, v)
                 except Exception:
                     pass
 
-        # Emit sweep signal (整条曲线)直接在结束时发出，保持兼容
         if not self._is_running:
             return
         self.new_sweep.emit(temp, chosen, currents, voltages)
@@ -320,9 +323,15 @@ class AppController(QObject):
             self._update_ui_lock_state()
             return
 
-        # 只在文件不存在时写表头，存在就直接追加
+        # 读取运行模式（在写表头前确定），只在文件不存在时写表头
+        operation = 'Resistance'
+        try:
+            operation = self.view.get_mode()
+        except Exception:
+            pass
+
         if not os.path.exists(file_path):
-            self._write_header_to_file(file_path)
+            self._write_header_to_file(file_path, operation=operation)
 
         self.is_running = True
         self._update_ui_lock_state()
@@ -339,12 +348,7 @@ class AppController(QObject):
 
         # 创建 MeasurementWorker，并根据 UI 选择的模式传入 operation 与 sweep 参数
         self.measurement_thread = QThread()
-        operation = 'Resistance'
-        try:
-            operation = self.view.get_mode()
-        except Exception:
-            pass
-
+        
         sweep_params = None
         if operation == 'SweepIV':
             sweep_params = self.view.get_sweep_params() or {}
@@ -362,23 +366,16 @@ class AppController(QObject):
             # 连接模式相关信号（根据需要连接 new_resistance 或 new_sweep）
         if operation == 'SweepIV':
             try:
-                # Sweep 相关统一交由 handle_new_sweep 处理（内部负责 GUI 更新与文件保存）
-                self.measurement_worker.new_sweep.connect(self.handle_new_sweep)
-                # 逐点更新连接
-                try:
-                    self.measurement_worker.new_sweep_point.connect(self.handle_new_sweep_point)
-                except Exception:
-                    pass
+                #self.measurement_worker.new_sweep.connect(self.handle_new_sweep)
+                self.measurement_worker.new_sweep_point.connect(self.handle_new_sweep_point)
             except Exception:
                 pass
         elif operation == 'Resistance':
             try:
-                # Resistance 模式使用新的命名 handle_new_resistance
                 self.measurement_worker.new_resistance.connect(self.handle_new_resistance)
             except Exception:
                 pass
         else:
-            # 未知模式，默认使用 Resistance 处理以保证向后兼容
             try:
                 self.measurement_worker.new_resistance.connect(self.handle_new_resistance)
             except Exception:
@@ -431,18 +428,13 @@ class AppController(QObject):
 
         try:
             self.view.handle_new_data(temp, resistances)
-        except Exception:
-            pass
-
-        try:
-            self.view.update_plot_titles()
-        except Exception:
-            pass
-
+            self.view.update_plot_titles() 
+        except Exception as e:
+            print(f"[Controller] handle_new_resistance error: {e}")
         self._write_resistance_to_file(temp, resistances)
 
     def _write_resistance_to_file(self, temp, resistances):
-        """将一行电阻测量数据写入主 CSV 文件（与原有 _write_data_to_file 行为相同）。"""
+        """将一行电阻测量数据写入主 CSV 文件"""
         try:
             path = self.view.get_save_path()
             with open(path, 'a', newline='', encoding='utf-8') as f:
@@ -455,7 +447,7 @@ class AppController(QObject):
                     if res_value is not None and self.model.channels[ch].get('enabled', False):
                         row_data.append(f"{res_value:.6e}")
                     else:
-                        row_data.append('XXXXXXE0')
+                        row_data.append('0.000000E0')
 
                 row = [timestamp, f"{temp:.6e}"] + row_data
                 writer.writerow(row)
@@ -464,86 +456,82 @@ class AppController(QObject):
                 QMessageBox.critical(self.view, "File Write Error", f"Error writing data to file:\n{e}")
             except Exception:
                 print(f"[Controller] Failed to write resistance data: {e}")
-
+    '''
     def handle_new_sweep(self, temp, ch_name, currents, voltages):
         """
         处理一次 SweepIV 的测量结果：
         1. 更新 View（绘图）。
-        2. 保存为单独的 sweep CSV（通过 _save_sweep_file）。
+        2. 保存为单独的 sweep CSV。
         3. 预留位置用于将来扩展（例如更新 model 的最近 sweep 状态）。
         """
         try:
-            # 更新 GUI
-            if self.view:
-                try:
-                    self.view.handle_new_sweep(temp, ch_name, currents, voltages)
-                except Exception:
-                    pass
-
-            # 记录/保存到单独文件
-            self._save_sweep_file(temp, ch_name, currents, voltages)
-
-            # 可扩展：将来可以更新 model 的 sweep 状态，例如：
-            # try: self.model.update_last_sweep(ch_name, currents, voltages)
-            # except Exception: pass
+            self.view.handle_new_sweep(temp, ch_name, currents, voltages)
         except Exception as e:
-            try:
-                print(f"[Controller] handle_new_sweep error: {e}")
-            except Exception:
-                pass
+            print(f"[Controller] handle_new_sweep error: {e}")
+        # 整条曲线的保存由逐点保存实现，避免在此处重复写入。
 
-    def handle_new_sweep_point(self, temp, ch_name, current, voltage):
-        """
-        处理单个 I-V 点的实时更新：把点发送到 View 进行逐点绘制。
-        不在此处写文件（写文件由整条曲线完成时统一保存），除非将来需要增量保存。
-        """
-        try:
-            if self.view:
-                try:
-                    self.view.handle_new_sweep_point(temp, ch_name, current, voltage)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    def _save_sweep_file(self, temp, ch_name, currents, voltages):
+    def _write_sweep_to_file(self, temp, ch_name, currents, voltages):
         """保存单次 IV sweep 到单独的 CSV 文件。"""
         try:
-            base_path = self.view.get_save_path() if self.view else None
-            if not base_path:
-                base_dir = self.model.save_path
-                base_name = 'sweep_data'
-            else:
-                base_dir = os.path.dirname(base_path) or '.'
-                base_name = os.path.splitext(os.path.basename(base_path))[0]
+            # Legacy method: keep for compatibility but do not duplicate header logic
+            path = self.view.get_save_path()
 
-            filename = os.path.join(base_dir, f"{base_name}_Sweep_{ch_name}_{temp:.3f}.csv")
-            with open(filename, 'w', newline='', encoding='utf-8') as f:
+            with open(path, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                # 保存格式：Timestamp, Temperature[K], Voltage[V], Current[A]
-                writer.writerow(['Timestamp', 'Temperature[K]', 'Voltage[V]', 'Current[A]'])
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                for i, v in zip(currents, voltages):
-                    # note: currents list corresponds to current values, voltages to measured voltages
-                    writer.writerow([timestamp, f"{temp:.6f}", f"{v:.6e}", f"{i:.6e}"])
+                for cur, v in zip(currents, voltages):
+                    writer.writerow([timestamp, f"{temp:.6f}", f"{v:.6e}", f"{cur:.6e}"])
+
             try:
-                if self.view:
-                    self.view.update_progress(f"Saved sweep: {os.path.basename(filename)}")
+                self.view.update_progress(f"Appended sweep to: {os.path.basename(path)}")
             except Exception:
                 pass
         except Exception as e:
             try:
-                if self.view:
-                    QMessageBox.warning(self.view, "Save Sweep", f"Failed to save sweep file: {e}")
+                QMessageBox.critical(self.view, "Save Sweep Error", f"Error writing sweep data to file:\n{e}")
             except Exception:
-                print(f"[Controller] Failed to save sweep file: {e}")
+                print(f"[Controller] Failed to write sweep file: {e}")
+    '''
+    def handle_new_sweep_point(self, temp, ch_name, current, voltage):
+        """
+        处理单个 I-V 点：更新 GUI 并将点追加保存到对应的 sweep 文件中（按设定温度分文件）。
+        """
+        # 更新 GUI（若可用），单层异常处理
+        try:
+            self.view.handle_new_sweep_point(temp, ch_name, current, voltage)
+        except Exception as e:
+            print(f"[Controller] GUI update failed for sweep point: {e}")
+
+        try:
+            self._append_sweep_point(temp, ch_name, current, voltage)
+        except Exception as e:
+            print(f"[Controller] Failed to append sweep point: {e}")
+
+    def _append_sweep_point(self, temp, ch_name, current, voltage):
+        """将单个 I-V 点追加到以设定温度命名的 sweep CSV 文件中。"""
+        path = self.view.get_save_path() 
+        try:
+            with open(path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # 注意：保持与之前的列顺序一致 Voltage, Current
+                writer.writerow([timestamp, f"{float(temp):.6f}", f"{float(voltage):.6e}", f"{float(current):.6e}"])
+        except Exception as e:
+            try:
+                QMessageBox.warning(self.view, "Save Sweep Point", f"Failed to save sweep point: {e}")
+            except Exception:
+                print(f"[Controller] Failed to save sweep point and cannot show dialog: {e}")
+            return
+
+        try:
+            self.view.update_progress(f"Saved sweep point: {os.path.basename(path)}")
+        except Exception as e:
+            print(f"[Controller] Failed to update progress: {e}")
 
     def choose_path(self):
         """处理文件路径选择。"""
         current_path = self.view.get_save_path()
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.view, "Select Data Save File", current_path, "Text Files (*.txt);;All Files (*)"
-        )
+        file_path, _ = QFileDialog.getSaveFileName(self.view, "Select Data Save File", current_path, "Text Files (*.txt);;All Files (*)")
 
         if not file_path:
             return
@@ -552,15 +540,44 @@ class AppController(QObject):
         self.model.set_save_path(file_path)
         self.view.update_plots_from_file(file_path)
 
-    def _write_header_to_file(self, file_path):
-        """向指定文件写入表头。"""
+    def _write_header_to_file(self, file_path, operation: str = None):
+        """向指定文件写入表头。
+
+        Args:
+            file_path: 目标文件路径
+            operation: 可选，'Resistance' 或 'SweepIV'，若未提供则从 view 获取
+        """
+        if operation is None:
+            try:
+                operation = self.view.get_mode()
+            except Exception:
+                operation = 'Resistance'
+
         try:
-            header = self.model.get_csv_header()
+            if operation == 'Resistance':
+                header = ["Timestamp", "Temperature[K]"]
+                channel_names = sorted(self.model.channels.keys())
+                for ch_name in channel_names:
+                    header.append(f"Resistance_{ch_name}[Ohm]")
+
+            elif operation == 'SweepIV':
+                header = ['Timestamp', 'Temperature[K]', 'Voltage[V]', 'Current[A]']
+            else:
+                # 默认回退到 Resistance 表头
+                header = ["Timestamp", "Temperature[K]"]
+                channel_names = sorted(self.model.channels.keys())
+                for ch_name in channel_names:
+                    header.append(f"Resistance_{ch_name}[Ohm]")
+
             with open(file_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(header)
         except Exception as e:
-            QMessageBox.critical(self.view, "File Write Error", f"Error writing header to file:\n{e}")
+            try:
+                QMessageBox.critical(self.view, "File Write Error", f"Error writing header to file:\n{e}")
+            except Exception:
+                print(f"[Controller] Error writing header to file: {e}")
+
     def get_save_path(self):
         """为View提供获取初始保存路径的方法。"""
         return self.model.save_path

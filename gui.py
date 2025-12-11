@@ -7,7 +7,7 @@ import time
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QLineEdit, QFileDialog, QFrame, QScrollArea, QSplitter,
-    QMessageBox, QDialog, QCheckBox, QGridLayout, QGroupBox, QToolButton, QSizePolicy
+    QMessageBox, QDialog, QCheckBox, QGridLayout, QGroupBox, QToolButton, QSizePolicy, QComboBox
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import QSize
@@ -402,6 +402,14 @@ class MainWindow(QMainWindow):
         sweep_params_layout.addWidget(QLabel('Step I [A]:'))
         self.sweep_step_edit = QLineEdit('1e-6'); self.sweep_step_edit.setFixedWidth(90)
         sweep_params_layout.addWidget(self.sweep_step_edit)
+        sweep_params_layout.addWidget(QLabel('Channel:'))
+        self.sweep_channel_combo = QComboBox()
+        self.sweep_channel_combo.addItems(['CH1', 'CH2', 'CH3', 'CH4'])
+        self.sweep_channel_combo.setCurrentIndex(0)
+        self.sweep_channel_combo.setFixedWidth(90)
+        self.sweep_channel_combo.setStyleSheet('QComboBox { background-color: white; }')
+        
+        sweep_params_layout.addWidget(self.sweep_channel_combo)
         sweep_params_layout.addStretch()
         sweep_layout.addWidget(sweep_params_widget)
 
@@ -473,7 +481,12 @@ class MainWindow(QMainWindow):
     def get_mode(self):
         """返回当前右侧选中的模式：'Resistance' 或 'SweepIV'"""
         idx = self.tab_widget.currentIndex()
-        return 'Resistance' if idx == 0 else 'SweepIV'
+        if idx == 0:
+            return 'Resistance'
+        elif idx == 1:
+            return 'SweepIV'
+        
+        return 'Resistance'
 
     def get_sweep_params(self):
         """从 SweepIV 选项卡读取起始/结束/步长电流参数，返回 dict。"""
@@ -483,7 +496,12 @@ class MainWindow(QMainWindow):
             step = float(self.sweep_step_edit.text())
         except Exception:
             return None
-        return {'start': start, 'stop': stop, 'step': step}
+        # 读取所选通道
+        try:
+            channel = str(self.sweep_channel_combo.currentText())
+        except Exception:
+            channel = 'CH1'
+        return {'start': start, 'stop': stop, 'step': step, 'channel': channel}
 
     def handle_new_sweep(self, temp, ch_name, currents, voltages):
         """在 SweepIV 选项卡上绘制新的一次 IV 扫描结果。
@@ -526,73 +544,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[GUI] handle_new_sweep error: {e}")
 
-    def handle_new_sweep_point(self, temp, ch_name, current, voltage):
-        """逐点追加 IV 点到当前温度对应的曲线。"""
-        try:
-            label = f"{temp:.3f} K"
-            # 颜色确保一致
-            if label in self.sweep_color_map:
-                color = self.sweep_color_map[label]
-            else:
-                color = pg.intColor(self.sweep_color_index, hues=12, values=255)
-                self.sweep_color_map[label] = color
-                self.sweep_color_index += 1
-
-            # 如果已有曲线，追加数据；否则创建新曲线
-            if label in self.sweep_traces:
-                pdi = self.sweep_traces[label]
-                try:
-                    x, y = pdi.getData()
-                    if x is None or y is None:
-                        x_list = [voltage]
-                        y_list = [current]
-                    else:
-                        # getData 可能返回 numpy arrays 或 lists
-                        x_list = list(x) + [voltage]
-                        y_list = list(y) + [current]
-                except Exception:
-                    x_list = [voltage]
-                    y_list = [current]
-                # 更新已有曲线的数据
-                try:
-                    pdi.setData(x_list, y_list)
-                except Exception:
-                    # fallback: 重新绘制这条曲线
-                    pdi = self.sweep_plot.plot(x_list, y_list, pen=pg.mkPen(color=color, width=2), symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
-                    self.sweep_traces[label] = pdi
-            else:
-                # 创建图例（若尚未创建）
-                try:
-                    if self.sweep_legend is None:
-                        self.sweep_legend = self.sweep_plot.addLegend(offset=(10, 10))
-                except Exception:
-                    self.sweep_legend = None
-
-                pdi = self.sweep_plot.plot([voltage], [current], pen=pg.mkPen(color=color, width=2), symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
-                self.sweep_traces[label] = pdi
-
-            # 保持标题为通道信息
-            try:
-                self.sweep_plot.setTitle(f"IV Sweep - {ch_name}")
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"[GUI] handle_new_sweep_point error: {e}")
-    def clear_sweep_plot(self):
-        """清空 sweep 图、重置图例和颜色映射。"""
-        try:
-            self.sweep_plot.clear()
-        except Exception:
-            pass
-        try:
-            # 如果有 legend 对象，尝试移除其图形项（pyqtgraph 没有直接删除 legend 的 API，重新创建 plot 时 legend 会被清空）
-            self.sweep_legend = None
-            self.sweep_color_map.clear()
-            self.sweep_color_index = 0
-            self.sweep_traces.clear()
-        except Exception:
-            pass
-
     def update_running_status(self, is_running):
         self.run_status_lamp.setChecked(is_running)
 
@@ -612,12 +563,17 @@ class MainWindow(QMainWindow):
         # 界面静态组件
         for widget in self.lockable_widgets:
             widget.setEnabled(not is_running)
-        # 右侧选项卡在系统运行时应被锁定（不能切换模式）
+        # 禁用选项卡切换（仅禁用 tabBar，不会触发自动切换当前索引）
         try:
             if hasattr(self, 'tab_widget') and self.tab_widget is not None:
-                self.tab_widget.setEnabled(not is_running)
+                try:
+                    self.tab_widget.tabBar().setEnabled(not is_running)
+                except Exception:
+                    # 回退：如果 tabBar 不可用，则保持原有行为不做任何处理
+                    pass
         except Exception:
             pass
+
         # 温度块内的控件
         for block in getattr(self, 'temp_blocks', []):
             # 输入文本框
@@ -663,12 +619,15 @@ class MainWindow(QMainWindow):
                 if not header or len(header) < 3:
                     return
                 temp_idx = 1
-                ch_indices = {}
+                ch_indices = {'CH1':2, 'CH2':3, 'CH3':4, 'CH4':5}
                 for i, h in enumerate(header):
+                    if h == 'Temperature[K]':
+                        temp_idx = i
                     if h.startswith('Resistance_'):
                         ch_name = h.split('_')[1].split('[')[0]
                         ch_indices[ch_name] = i
                 data_by_ch = {ch: {'x': [], 'y': []} for ch in ch_indices}
+                print(ch_indices)
                 for row in reader:
                     if len(row) < max(ch_indices.values())+1:
                         continue
@@ -676,7 +635,7 @@ class MainWindow(QMainWindow):
                         temp = float(row[temp_idx])
                         for ch, idx in ch_indices.items():
                             val = row[idx]
-                            if 'X' in val or val.strip() == '':
+                            if val == '0.000000E0' or val.strip() == '':
                                 continue
                             y = float(val)
                             data_by_ch[ch]['x'].append(temp)
@@ -830,7 +789,7 @@ class MainWindow(QMainWindow):
             # 委托 controller 处理（controller 将负责同时写 A 和 B）
             try:
                 if hasattr(self, "controller") and hasattr(self.controller, "set_manual_temperature"):
-                    self.controller.set_manual_temperature(temp, ramp=ramp)
+                    self.controller.set_manual_temperature(temp, ramp)
                 else:
                     QMessageBox.warning(self, "未实现", "控制器未实现 set_manual_temperature 接口。")
             except Exception as e:
