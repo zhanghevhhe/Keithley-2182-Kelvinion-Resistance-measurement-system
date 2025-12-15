@@ -51,8 +51,25 @@ The resistance would be measured in delta mode and shown in terminal.
 
 
 # Program testing
-run gui.py
+1. run gui.py
+2. set the channel setting by clicking the Channel Setting button, you can edit/enable selected channels to check the connection
+3. if everything runs well, click apply and exit, return to the main window
+4. set the save path and the temperature sequence
+5. click Run button to start the measuring sequence, most widgets would be locked.
+6. By clicking stop button, you can abort the measurement at any time.
+7. You can restart the measurement by clicking run button again after you solve problems and edit the temperature sequence.
+8. Waiting until the measurement finishes.
 
+you can also manually set the temperature by clicking the set temperature text box when the measurement is not running.
+
+you may set the config by clicking the "Open config" button, if necessary.(including the PID, ramp rate, temperature control settings) or load config from other config file. If the measurement is still running, you should click the "Apply config" to apply your setting into the measurement sequence.
+
+The measurement data would be displayed at the right pannel and saved into the set path.
+
+
+
+
+# function:
 gui.py is about UI layer, measure_cores.py includes instrument class and basic measuring method, like delta_mode measurement, wait_for_stable, controller.py is to manage the measurement strategy and some complex functions.
 ...
 
