@@ -13,6 +13,7 @@
 3. Connect keithley 3706A to GPIB-USB-HS with GPIB cable.
 4. Connect Kelvinion from the Serial port with computer. (GPIB or USB also work)
 5. Connect the thermometers, heaters to Kelvinion.
+6. Open NI MAX to check all the instruments are connected to the computer. You may have to download the newest GPIB drive if the GPIB instruments are not visible.
 
  
 ## Resistance measure
