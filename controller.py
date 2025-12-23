@@ -7,6 +7,7 @@ controller.py: Contains the main application logic and state management.
 import time
 import os
 import csv
+import json
 import datetime
 import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal, QThread
@@ -291,6 +292,73 @@ class AppController(QObject):
     def clear_all_temp_blocks(self):
         """命令View清除所有温度块并重置。"""
         self.view.clear_all_temp_blocks()
+
+    def save_temp_blocks(self):
+        """保存当前温度块配置到文件。"""
+        sequence_data = self.view.get_sequence_data()
+        if not sequence_data:
+            QMessageBox.warning(self.view, "保存失败", "当前没有可保存的温度块。")
+            return
+
+        default_dir = os.path.dirname(self.model.save_path) if getattr(self.model, "save_path", "") else os.getcwd()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.view,
+            "保存温度块配置",
+            os.path.join(default_dir, "temp_blocks.json"),
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(sequence_data, f, ensure_ascii=False, indent=2)
+            QMessageBox.information(self.view, "保存成功", f"温度块已保存到：\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self.view, "保存失败", f"无法保存温度块：{e}")
+
+    def load_temp_blocks(self):
+        """从文件加载温度块配置并更新UI。"""
+        default_dir = os.path.dirname(self.model.save_path) if getattr(self.model, "save_path", "") else os.getcwd()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.view,
+            "加载温度块配置",
+            default_dir,
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            QMessageBox.critical(self.view, "加载失败", f"读取文件失败：{e}")
+            return
+
+        if not isinstance(data, list):
+            QMessageBox.warning(self.view, "加载失败", "文件格式不正确，应为温度块列表。")
+            return
+
+        normalized = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            block = {
+                'start': str(item.get('start', '')).strip(),
+                'stop': str(item.get('stop', '')).strip(),
+                'step': str(item.get('step', '')).strip(),
+                'ramp': str(item.get('ramp', '')).strip(),
+                'end': bool(item.get('end', False))
+            }
+            if all(block.get(k, '') != '' for k in ['start', 'stop', 'step', 'ramp']):
+                normalized.append(block)
+
+        if not normalized:
+            QMessageBox.warning(self.view, "加载失败", "文件中没有有效的温度块。")
+            return
+
+        self.view.load_sequence_blocks(normalized)
 
     def _update_ui_lock_state(self):
         """计算并更新UI的锁定状态。"""

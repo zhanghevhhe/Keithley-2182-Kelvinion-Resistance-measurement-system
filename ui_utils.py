@@ -22,13 +22,32 @@ def create_stop_icon():
     painter.setRenderHint(QPainter.Antialiasing); painter.setPen(Qt.NoPen); painter.setBrush(QColor(200, 0, 0))
     painter.drawRect(3, 3, 10, 10); painter.end(); return QIcon(pix)
 
-def create_lock_icon(is_locked=False):
-    pix = QPixmap(16, 16); pix.fill(Qt.transparent); painter = QPainter(pix)
-    painter.setRenderHint(QPainter.Antialiasing)
-    pen = QPen(QColor(0,0,0), 1.5); painter.setPen(pen); painter.setBrush(Qt.NoBrush)
-    painter.drawArc(5, 2, 6, 6, 0, 180 * 16); painter.drawLine(5, 5, 5, 9); painter.drawLine(11, 5, 11, 9)
-    painter.setBrush(QColor(0,0,0)); painter.drawRect(3, 8, 10, 7)
+def create_save_icon():
+    pix = QPixmap(18, 18); pix.fill(Qt.transparent); painter = QPainter(pix)
+    painter.setPen(QPen(QColor(100, 100, 100), 1))    
+    painter.setBrush(QColor(0, 122, 204))
+    painter.drawRect(2, 2, 14, 14)
+    
+    painter.setBrush(QColor(230, 240, 255))
+    painter.drawRect(4, 3, 10, 4)
+    
+    painter.setBrush(QColor(200, 225, 255))
+    painter.drawRect(5, 9, 8, 5)
     painter.end(); return QIcon(pix)
+
+def create_open_icon():
+    
+    pix = QPixmap(18, 18); pix.fill(Qt.transparent); painter = QPainter(pix)
+    painter.setPen(QPen(QColor(100, 100, 100), 1))
+    painter.setBrush(QColor(255, 204, 0))
+    
+    painter.drawRect(2, 7, 14, 8)
+
+    painter.drawRect(4, 5, 8, 3)
+    painter.setBrush(QColor(255, 230, 120))
+    painter.drawRect(3, 8, 12, 6)
+    painter.end(); return QIcon(pix)
+
 
 def get_labview_style():
     return """
