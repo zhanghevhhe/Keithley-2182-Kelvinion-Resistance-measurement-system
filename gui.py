@@ -7,11 +7,11 @@ import time
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QLineEdit, QFileDialog, QFrame, QScrollArea, QSplitter,
-    QMessageBox, QDialog, QCheckBox, QGridLayout, QGroupBox, QToolButton, QSizePolicy, QComboBox
+    QMessageBox, QDialog, QCheckBox, QGridLayout, QGroupBox, QToolButton, QSizePolicy, QComboBox, QStyle
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import QSize
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 import pyqtgraph as pg
 from measure_core import MeasurementSystem
 from controller import AppController
@@ -78,6 +78,7 @@ class MainWindow(QMainWindow):
         self.lockable_widgets = [
             self.path_edit, self.path_btn,
             self.temp_blocks_container, self.add_block_btn, self.clear_all_btn,
+            self.save_blocks_btn, self.load_blocks_btn,
             self.set_temp_edit, self.channel_btn,
         ]
         self.setStyleSheet(get_labview_style())
@@ -102,6 +103,8 @@ class MainWindow(QMainWindow):
         
         self.add_block_btn.clicked.connect(self.controller.add_temp_block)
         self.clear_all_btn.clicked.connect(self.controller.clear_all_temp_blocks)
+        self.save_blocks_btn.clicked.connect(self.controller.save_temp_blocks)
+        self.load_blocks_btn.clicked.connect(self.controller.load_temp_blocks)
 
         self.channel_btn.clicked.connect(self.controller.open_channel_config)
 
@@ -243,6 +246,15 @@ class MainWindow(QMainWindow):
         
         return container
 
+    def _get_icon(self, theme_name, fallback_standard_icon):
+        """
+        优先使用系统主题扁平化图标，若不可用则回退到 Qt 内置标准图标。
+        """
+        icon = QIcon.fromTheme(theme_name)
+        if icon.isNull():
+            icon = self.style().standardIcon(fallback_standard_icon)
+        return icon
+
     def _create_status_panel(self):
         """
         创建系统状态面板。
@@ -315,8 +327,20 @@ class MainWindow(QMainWindow):
         self.add_block_btn = QPushButton("Add Block")
         self.clear_all_btn = QPushButton("Clear All")
         self.clear_all_btn.setObjectName("clearAllButton")
+        self.save_blocks_btn = QPushButton()
+        self.save_blocks_btn.setIcon(self._get_icon("document-save", QStyle.SP_DialogSaveButton))
+        self.save_blocks_btn.setToolTip("保存当前温度块配置为 JSON")
+        self.save_blocks_btn.setFixedWidth(36)
+        self.load_blocks_btn = QPushButton()
+        self.load_blocks_btn.setIcon(self._get_icon("document-open", QStyle.SP_DialogOpenButton))
+        self.load_blocks_btn.setToolTip("从 JSON 文件加载温度块配置")
+        self.load_blocks_btn.setFixedWidth(36)
         btns_layout = QHBoxLayout()
-        btns_layout.addWidget(self.add_block_btn); btns_layout.addWidget(self.clear_all_btn); btns_layout.addStretch()
+        btns_layout.addWidget(self.add_block_btn)
+        btns_layout.addWidget(self.clear_all_btn)
+        btns_layout.addWidget(self.save_blocks_btn)
+        btns_layout.addWidget(self.load_blocks_btn)
+        btns_layout.addStretch()
         temp_layout.addWidget(self.scroll_area)
         temp_layout.addLayout(btns_layout)
         self.temp_blocks_layout.addStretch()  # 只添加一个stretch
@@ -728,6 +752,7 @@ class MainWindow(QMainWindow):
             layout.insertWidget(layout.count()-1, line)
         layout.addStretch()  # 重新添加stretch
         self.set_ui_locked(self.run_stop_btn.isChecked())
+        return block
 
     def clear_all_temp_blocks(self):
         # 移除所有widget和stretch
@@ -744,6 +769,37 @@ class MainWindow(QMainWindow):
             layout.addStretch()
         self.set_ui_locked(self.run_stop_btn.isChecked())
 
+    def load_sequence_blocks(self, sequence_data):
+        """
+        根据给定的温度块数据重建序列区域。
+        Args:
+            sequence_data (list[dict]): 包含 start/stop/step/ramp/end 的字典列表
+        """
+        layout = self.temp_blocks_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.temp_blocks.clear()
+
+        if not sequence_data:
+            self.add_temp_block()
+        else:
+            for data in sequence_data:
+                block = self.add_temp_block()
+                if not block:
+                    continue
+                block.start.setText(str(data.get('start', '')).strip())
+                block.stop.setText(str(data.get('stop', '')).strip())
+                block.step.setText(str(data.get('step', '')).strip())
+                block.ramp.setText(str(data.get('ramp', '')).strip())
+                block.end_checkbox.setChecked(bool(data.get('end', False)))
+                block.check_edited()
+        # 保证末尾有一个 stretch
+        if layout.count() == 0 or not isinstance(layout.itemAt(layout.count()-1).widget(), type(None)):
+            layout.addStretch()
+        self.set_ui_locked(self.run_stop_btn.isChecked())
+
     def get_sequence_data(self):
         sequence_data = []
         for block_widget in self.temp_blocks:
@@ -755,6 +811,7 @@ class MainWindow(QMainWindow):
                     'end': block_widget.end_checkbox.isChecked()
                 })
         return sequence_data
+
 
     def get_save_path(self):
         return self.path_edit.text()
