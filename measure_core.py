@@ -255,7 +255,6 @@ class Keithley6221:
     1. PC -> GPIB -> 6221
     2. 6221 -> RS232 + Trigger Link -> 2182
     """
-
     def __init__(self, resource):
         """
         :param resource: pyvisa resource object (已经打开的资源实例)
@@ -452,7 +451,6 @@ class Keithley6221:
         except:
             pass
         # 注意：这里不关闭 resource，因为 resource 是外部传入的，应由外部关闭
-
 
 class SwitchMatrix3706:
     """
@@ -697,7 +695,7 @@ class MeasurementSystem(QObject):
                         msg = str(e)
                         print(f"[System] delta_measure attempt {attempt} failed for {ch_name}: {msg}")
                         # 在超时或通信错误时，尝试发送中止并稍后重试
-                        self.k6221.inst.write('SOURCE:SWEEP:ABORT')
+                        self.k6221.close()
                         time.sleep(backoff * attempt)
 
                 if last_exc is not None and voltage is None:
@@ -719,7 +717,7 @@ class MeasurementSystem(QObject):
             self._safe_emit(self.error_occurred, error_msg)
             # 如果 delta_measure 中途出错，尝试中止扫描
             try:
-                self.k6221.inst.write('SOURCE:SWEEP:ABORT')
+                self.k6221.close()
                 print("[K6221] Sent ABORT command due to error.")
             except Exception as abort_e:
                 print(f"Error sending ABORT command: {abort_e}")
