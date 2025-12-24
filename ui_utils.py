@@ -5,11 +5,6 @@ ui_utils.py: Contains UI-related utility functions, such as icon creators and st
 from PyQt5.QtCore import Qt, QPoint
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QPen, QIcon, QPolygon
 
-def create_labview_folder_icon():
-    pix = QPixmap(16, 16); pix.fill(Qt.transparent); painter = QPainter(pix)
-    painter.setBrush(QColor(255, 204, 0)); painter.setPen(QPen(QColor(100, 100, 100), 1))
-    painter.drawRect(1, 3, 14, 12); painter.drawRect(2, 1, 5, 2); painter.drawRect(1, 6, 14, 9)
-    painter.end(); return QIcon(pix)
 
 def create_run_icon():
     pix = QPixmap(16, 16); pix.fill(Qt.transparent); painter = QPainter(pix)

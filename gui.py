@@ -7,7 +7,7 @@ import time
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QLineEdit, QFileDialog, QFrame, QScrollArea, QSplitter,
-    QMessageBox, QDialog, QCheckBox, QGridLayout, QGroupBox, QToolButton, QSizePolicy, QComboBox, QStyle
+    QMessageBox, QDialog, QCheckBox, QGridLayout, QGroupBox, QToolButton, QSizePolicy, QComboBox, QStyle, QProgressBar
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import QSize
@@ -18,7 +18,7 @@ from controller import AppController
 import numpy as np
 
 # 导入其他模块模块
-from ui_utils import get_labview_style, create_run_icon, create_stop_icon, create_labview_folder_icon
+from ui_utils import get_labview_style, create_run_icon, create_stop_icon
 from widgets.temp_block_widget import TempBlockWidget
 from dialogs.set_temp_dialog import SetTempDialog
 from dialogs.channel_config_dialog import ChannelConfigDialog
@@ -193,32 +193,95 @@ class MainWindow(QMainWindow):
         bottom_layout.setSpacing(10)
         
         # --- 温度显示区域 ---
+        # 使用 GridLayout 确保标签和输入框对齐
+        temp_grid = QGridLayout()
+        temp_grid.setContentsMargins(0, 0, 0, 0)
+        temp_grid.setSpacing(8)
+        temp_grid.setColumnStretch(1, 0)  # 输入框列不拉伸
+        temp_grid.setColumnStretch(2, 0)  # 功率显示列不拉伸
+        temp_grid.setColumnStretch(3, 1)   # 右侧空白列拉伸
+        
         # 样品温度显示（F通道）- 显示样品实际温度
-        sample_temp_row = QHBoxLayout()
-        sample_temp_row.setContentsMargins(0,0,0,0); sample_temp_row.setSpacing(8)
-        sample_temp_row.addWidget(QLabel("Sample Temp[K]:"))
-        self.sample_temp_edit = QLineEdit("--"); self.sample_temp_edit.setReadOnly(True); self.sample_temp_edit.setFixedWidth(70)
-        sample_temp_row.addWidget(self.sample_temp_edit)
-        sample_temp_row.addStretch()
-        bottom_layout.addLayout(sample_temp_row)
+        sample_temp_label = QLabel("Sample [K]:")
+        self.sample_temp_edit = QLineEdit("--")
+        self.sample_temp_edit.setReadOnly(True)
+        self.sample_temp_edit.setFixedWidth(70)
+        temp_grid.addWidget(sample_temp_label, 0, 0)
+        temp_grid.addWidget(self.sample_temp_edit, 0, 1)
+        
+        # 样品功率显示
+        sample_power_label = QLabel("OUTPUT:")
+        self.sample_power_bar = QProgressBar()
+        self.sample_power_bar.setMinimum(0)
+        self.sample_power_bar.setMaximum(100)
+        self.sample_power_bar.setValue(0)
+        self.sample_power_bar.setFixedWidth(40)
+        self.sample_power_bar.setFixedHeight(15)  # 设置固定高度
+        self.sample_power_bar.setTextVisible(False)  # 不显示文本，使用旁边的标签
+        # 设置进度条样式，确保填充色可见
+        heaterbar_style = """
+            QProgressBar {
+                border: 1px solid #a0a0a0;
+                border-radius: 3px;
+                background-color: #f0f0f0;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #d00000;
+            }
+        """
+        self.sample_power_bar.setStyleSheet(heaterbar_style)
+        self.sample_power_value = QLabel("--")
+        self.sample_power_value.setFixedWidth(45)
+        sample_power_row = QHBoxLayout()
+        sample_power_row.setContentsMargins(0, 0, 0, 0)
+        sample_power_row.setSpacing(4)
+        # sample_power_row.addWidget(sample_power_label)
+        sample_power_row.addWidget(self.sample_power_bar)
+        sample_power_row.addWidget(self.sample_power_value)
+        sample_power_widget = QWidget()
+        sample_power_widget.setLayout(sample_power_row)
+        temp_grid.addWidget(sample_power_widget, 0, 2)
         
         # 样品腔温度显示（D通道）- 显示样品腔环境温度
-        chamber_temp_row = QHBoxLayout()
-        chamber_temp_row.setContentsMargins(0,0,0,0); chamber_temp_row.setSpacing(8)
-        chamber_temp_row.addWidget(QLabel("Chamber Temp[K]:"))
-        self.chamber_temp_edit = QLineEdit("--"); self.chamber_temp_edit.setReadOnly(True); self.chamber_temp_edit.setFixedWidth(70)
-        chamber_temp_row.addWidget(self.chamber_temp_edit)
-        chamber_temp_row.addStretch()
-        bottom_layout.addLayout(chamber_temp_row)
+        chamber_temp_label = QLabel("Chamber [K]:")
+        self.chamber_temp_edit = QLineEdit("--")
+        self.chamber_temp_edit.setReadOnly(True)
+        self.chamber_temp_edit.setFixedWidth(70)
+        temp_grid.addWidget(chamber_temp_label, 1, 0)
+        temp_grid.addWidget(self.chamber_temp_edit, 1, 1)
+        
+        # 腔体功率显示
+        chamber_power_label = QLabel("OUTPUT:")
+        self.chamber_power_bar = QProgressBar()
+        self.chamber_power_bar.setMinimum(0)
+        self.chamber_power_bar.setMaximum(100)
+        self.chamber_power_bar.setValue(0)
+        self.chamber_power_bar.setFixedWidth(40)
+        self.chamber_power_bar.setFixedHeight(15)  # 设置固定高度
+        self.chamber_power_bar.setTextVisible(False)  # 不显示文本，使用旁边的标签
+        # 设置进度条样式，确保填充色可见
+        self.chamber_power_bar.setStyleSheet(heaterbar_style)
+        self.chamber_power_value = QLabel("--")
+        self.chamber_power_value.setFixedWidth(45)
+        chamber_power_row = QHBoxLayout()
+        chamber_power_row.setContentsMargins(0, 0, 0, 0)
+        chamber_power_row.setSpacing(4)
+        # chamber_power_row.addWidget(chamber_power_label)
+        chamber_power_row.addWidget(self.chamber_power_bar)
+        chamber_power_row.addWidget(self.chamber_power_value)
+        chamber_power_widget = QWidget()
+        chamber_power_widget.setLayout(chamber_power_row)
+        temp_grid.addWidget(chamber_power_widget, 1, 2)
         
         # 设置温度输入框 - 用于手动设置目标温度
-        set_temp_row = QHBoxLayout()
-        set_temp_row.setContentsMargins(0,0,0,0); set_temp_row.setSpacing(8)
-        set_temp_row.addWidget(QLabel("Set Temp[K]:"))
-        self.set_temp_edit = QLineEdit("--"); self.set_temp_edit.setFixedWidth(70)
-        set_temp_row.addWidget(self.set_temp_edit)
-        set_temp_row.addStretch()
-        bottom_layout.addLayout(set_temp_row)
+        set_temp_label = QLabel("Set Temp[K]:")
+        self.set_temp_edit = QLineEdit("--")
+        self.set_temp_edit.setFixedWidth(70)
+        temp_grid.addWidget(set_temp_label, 2, 0)
+        temp_grid.addWidget(self.set_temp_edit, 2, 1)
+        
+        bottom_layout.addLayout(temp_grid)
         
         # Channel Settings 放在单独一行，占满宽度
         self.channel_btn = QPushButton("Channel Settings")
@@ -246,14 +309,6 @@ class MainWindow(QMainWindow):
         
         return container
 
-    def _get_icon(self, theme_name, fallback_standard_icon):
-        """
-        优先使用系统主题扁平化图标，若不可用则回退到 Qt 内置标准图标。
-        """
-        icon = QIcon.fromTheme(theme_name)
-        if icon.isNull():
-            icon = self.style().standardIcon(fallback_standard_icon)
-        return icon
 
     def _create_status_panel(self):
         """
@@ -308,7 +363,7 @@ class MainWindow(QMainWindow):
         path_group = QGroupBox("Data Path")
         path_layout = QHBoxLayout(path_group)
         self.path_edit = QLineEdit(self.controller.get_save_path())
-        self.path_btn = QPushButton(); self.path_btn.setIcon(create_labview_folder_icon())
+        self.path_btn = QPushButton(); self.path_btn.setIcon(self.style().standardIcon(QStyle.SP_DirOpenIcon))
         path_layout.addWidget(QLabel("Save Path:")); path_layout.addWidget(self.path_edit); path_layout.addWidget(self.path_btn)
         return path_group
 
@@ -328,11 +383,11 @@ class MainWindow(QMainWindow):
         self.clear_all_btn = QPushButton("Clear All")
         self.clear_all_btn.setObjectName("clearAllButton")
         self.save_blocks_btn = QPushButton()
-        self.save_blocks_btn.setIcon(self._get_icon("document-save", QStyle.SP_DialogSaveButton))
+        self.save_blocks_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
         self.save_blocks_btn.setToolTip("保存当前温度块配置为 JSON")
         self.save_blocks_btn.setFixedWidth(36)
         self.load_blocks_btn = QPushButton()
-        self.load_blocks_btn.setIcon(self._get_icon("document-open", QStyle.SP_DialogOpenButton))
+        self.load_blocks_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
         self.load_blocks_btn.setToolTip("从 JSON 文件加载温度块配置")
         self.load_blocks_btn.setFixedWidth(36)
         btns_layout = QHBoxLayout()
@@ -466,6 +521,44 @@ class MainWindow(QMainWindow):
             temp (float): 样品腔温度值，单位为K
         """
         self.chamber_temp_edit.setText(f"{temp:.3f}")
+    
+    def update_sample_power_display(self, power):
+        """
+        更新样品功率显示。
+        
+        Args:
+            power (float): 样品功率值，0~100的百分比
+        """
+        try:
+            power_val = float(power)  # 确保转换为浮点数
+            power_val = max(0.0, min(100.0, power_val))  # 限制在0~100范围
+            bar_value = int(round(power_val))  # 四舍五入到整数
+            self.sample_power_bar.setValue(bar_value)
+            self.sample_power_bar.update()  # 强制更新进度条显示
+            self.sample_power_value.setText(f"{power_val:.1f}%")
+        except (ValueError, TypeError) as e:
+            print(f"[Power] Error updating sample power: {e}, power={power}")
+            self.sample_power_bar.setValue(0)
+            self.sample_power_value.setText("--")
+    
+    def update_chamber_power_display(self, power):
+        """
+        更新腔体功率显示。
+        
+        Args:
+            power (float): 腔体功率值，0~100的百分比
+        """
+        try:
+            power_val = float(power)  # 确保转换为浮点数
+            power_val = max(0.0, min(100.0, power_val))  # 限制在0~100范围
+            bar_value = int(round(power_val))  # 四舍五入到整数
+            self.chamber_power_bar.setValue(bar_value)
+            self.chamber_power_bar.update()  # 强制更新进度条显示
+            self.chamber_power_value.setText(f"{power_val:.1f}%")
+        except (ValueError, TypeError) as e:
+            print(f"[Power] Error updating chamber power: {e}, power={power}")
+            self.chamber_power_bar.setValue(0)
+            self.chamber_power_value.setText("--")
 
     def update_progress(self, message):
         self.status_display.setText(message)
@@ -840,8 +933,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "输入错误", "请输入有效的温度数值！")
                 return
 
-            # 更新 UI 显示 set temp 文本框（保留两位小数）
-            self.set_temp_edit.setText(f"{temp:.2f}")
+            # 更新 UI 显示 set temp 文本框（保留三位小数）
+            self.set_temp_edit.setText(f"{temp:.3f}")
 
             # 委托 controller 处理（controller 将负责同时写 A 和 B）
             try:

@@ -30,6 +30,7 @@ class KelvinionController:
         self.inst.data_bits = 8
         self.inst.stop_bits = StopBits.one
         self.temperatures = (0.0, 0.0)  # (sample_temp, chamber_temp)
+        self.powers = (0.0, 0.0)  # (sample_power, chamber_power)
 
         # 尝试安全查询 IDN，若失败则继续让上层处理异常
         try:
@@ -48,6 +49,9 @@ class KelvinionController:
         with self._lock:
             return self.inst.query(cmd)
     # -----------------------------------
+
+    #--------------------------------------------------
+    # 设置/读取仪器参数：设置用set，读取用read
 
     def set_enable(self, loop: str = 'A', enable: bool = True):
         state = 'HIGH' if enable else 'OFF'
@@ -150,19 +154,11 @@ class KelvinionController:
             self.set_chamber_range(target)
         print(f"[Kelvinion] Set loop {loop} to {target:.2f} K")
 
-    def get_set_temperature(self, channel: str = 'A') -> float:  # A\B
+    def read_set_temperature(self, channel: str = 'A') -> float:  # A\B
         raw = self._safe_query(f"[READ:SETP:{channel}]")
         return float(raw[1:-3])
-
-    def get_sample_temperature(self):
-        """从属性获取样品温度（F通道，temperature第一个元素）"""
-        return self.temperatures[0]
     
-    def get_chamber_temperature(self):
-        """从属性获取样品腔温度（D通道，temperature第二个元素）"""
-        return self.temperatures[1]
-    
-    def get_temperatures(self):
+    def read_temperatures(self):
         """
         原子性获取样品(F)和腔体(D)温度，返回 (sample_temp, chamber_temp)。
         UI / 外部调用应优先使用此接口避免并发交错。
@@ -175,11 +171,47 @@ class KelvinionController:
             t_d = float(raw_d[1:-3])
         return t_f, t_d
     
+    def read_power(self, channel: str = 'A') -> float:  # A\B
+        raw = self._safe_query(f"[READ:POWER:{channel}]")
+        return float(raw[1:-3])
+    
+    def read_powers(self):
+        """
+        原子性获取样品(F)和腔体(D)功率，返回 (sample_power, chamber_power)。
+        UI / 外部调用应优先使用此接口避免并发交错。
+        """
+        with self._lock:
+            raw_a = self.inst.query(f"[READ:POWER:A]")
+            p_a = float(raw_a[1:-3])
+            raw_b = self.inst.query(f"[READ:POWER:B]")
+            p_b = float(raw_b[1:-3])
+        return p_a, p_b
+
+    #--------------------------------------------------
+    # 从缓存获取数据
+    def get_sample_power(self):
+        '''从属性获取样品功率（LOOPA, powers第一个元素）'''
+        return self.powers[0]
+    
+    def get_chamber_power(self):
+        '''从属性获得样品腔功率（LOOPB,powers第二个元素）'''
+        return self.powers[1]
+
+    def get_sample_temperature(self):
+        """从属性获取样品温度（F通道，temperature第一个元素）"""
+        return self.temperatures[0]
+    
+    def get_chamber_temperature(self):
+        """从属性获取样品腔温度（D通道，temperature第二个元素）"""
+        return self.temperatures[1]
+    
     def _tolerance(self, target: float) -> float:
         for entry in self.pidramp["tolerance_ranges"]:
             if entry["min"] <= target < entry["max"]:
                 return entry["tolerance"]
         return 0.1
+    #--------------------------------------------------
+    # 其他功能语句
 
     def wait_for_stable(self, target: float, loop: str = 'A', is_running_checker=None):
         tol = self._tolerance(target)
@@ -460,6 +492,8 @@ class SwitchMatrix3706:
 class MeasurementSystem(QObject):
     sample_temp_changed = pyqtSignal(float)    # 样品温度（F通道）
     chamber_temp_changed = pyqtSignal(float)   # 样品腔温度（D通道）
+    sample_power_changed = pyqtSignal(float)   # 样品功率（0~100%）
+    chamber_power_changed = pyqtSignal(float)   # 腔体功率（0~100%）
     error_occurred = pyqtSignal(str)           # 错误信息信号
     warning_occurred = pyqtSignal(str)         # 警告信息信号
 
@@ -515,11 +549,11 @@ class MeasurementSystem(QObject):
         # 温度监控定时器 —— 仅在成功初始化硬件后启用
             
         self.temp_timer = QTimer()
-        self.temp_timer.timeout.connect(self._update_hardware_temperatures)
+        self.temp_timer.timeout.connect(self._update_hardware_temperatures_powers)
         self.temp_timer.start(200)  # 每200 ms更新一次硬件温度
 
         self.temp_display_timer = QTimer()
-        self.temp_display_timer.timeout.connect(self._update_display_temperatures)
+        self.temp_display_timer.timeout.connect(self._update_display_temperatures_powers)
         self.temp_display_timer.start(1000)  # 每秒更新一次显示
 
     def get_available_sources(self):
@@ -592,21 +626,22 @@ class MeasurementSystem(QObject):
             "enabled": is_enabled
         }
 
-    def _update_hardware_temperatures(self):
+    def _update_hardware_temperatures_powers(self):
         """
         定期从硬件获取温度数据并发送信号。
         这个方法由定时器每秒调用一次。
         """
         try:
             # 原子性一次性读取样品与腔体温度，避免交叉读写导致错位或交替值
-            self.kelvinion.temperatures = self.kelvinion.get_temperatures()
+            self.kelvinion.temperatures = self.kelvinion.read_temperatures()
+            self.kelvinion.powers = self.kelvinion.read_powers()
         except Exception as e:
             error_msg = f"Failed to read temperatures from Kelvinion: {e}"
             print(f"[Temperature Update] {error_msg}")
             self._safe_emit(self.error_occurred, error_msg)
             self.kelvinion.temperatures = 0.0, 0.0
 
-    def _update_display_temperatures(self):
+    def _update_display_temperatures_powers(self):
         # 发送温度信号
         sample_temp, chamber_temp = self.kelvinion.temperatures
         try:
@@ -618,6 +653,18 @@ class MeasurementSystem(QObject):
             self._safe_emit(self.error_occurred, error_msg)
             self._safe_emit(self.sample_temp_changed, 0.0)
             self._safe_emit(self.chamber_temp_changed, 0.0)
+        
+        # 读取并发送功率信号
+        try:
+            sample_power, chamber_power = self.kelvinion.powers
+            self._safe_emit(self.sample_power_changed, sample_power)
+            self._safe_emit(self.chamber_power_changed, chamber_power)
+        except Exception as e:
+            error_msg = f"Power read error: {e}"
+            print(f"[Power Update] {error_msg}")
+            # 功率读取失败时不显示错误，只设置为0
+            self._safe_emit(self.sample_power_changed, 0.0)
+            self._safe_emit(self.chamber_power_changed, 0.0)
 
     def measure_single_channel(self, ch_name, channel_config):
         attempts = 3

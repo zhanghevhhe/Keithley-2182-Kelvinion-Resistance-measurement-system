@@ -278,6 +278,8 @@ class AppController(QObject):
         self.view = view
         self.model.sample_temp_changed.connect(self.view.update_sample_temp_display)
         self.model.chamber_temp_changed.connect(self.view.update_chamber_temp_display)
+        self.model.sample_power_changed.connect(self.view.update_sample_power_display)
+        self.model.chamber_power_changed.connect(self.view.update_chamber_power_display)
         self.model.error_occurred.connect(self.view.show_error)
         self.model.warning_occurred.connect(self.view.show_warning)
 
@@ -735,8 +737,8 @@ class AppController(QObject):
         try:
             kelvinion = getattr(model, 'kelvinion', None)
 
-            target_a = kelvinion.get_set_temperature()
-            target_b = kelvinion.get_set_temperature('B')
+            target_a = kelvinion.read_set_temperature()
+            target_b = kelvinion.read_set_temperature('B')
 
             view.update_progress(f"Applying sample ramp/PID for target {target_a:.2f} K...")
             kelvinion.set_sample_ramp(target_a)
