@@ -545,7 +545,7 @@ class MeasurementSystem(QObject):
             
 
         # 温度监控定时器 —— 仅在成功初始化硬件后启用
-            
+
         self.temp_timer = QTimer()
         self.temp_timer.timeout.connect(self._update_hardware_temperatures_powers)
         self.temp_timer.start(200)  # 每200 ms更新一次硬件温度

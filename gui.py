@@ -186,6 +186,15 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(self._create_sequence_panel(), 1) # 占据所有剩余空间
 
+        self.progressbar = QProgressBar()
+        self.progressbar.setValue(0)
+        self.progressbar.setTextVisible(True)
+        self.progressbar.setFormat("Progress: %v/%m")
+        self.progressbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        layout.addWidget(self.progressbar)
+
+
         # --- 下部 (固定在底部) ---
         bottom_widget = QWidget()
         bottom_layout = QVBoxLayout(bottom_widget)
@@ -554,6 +563,13 @@ class MainWindow(QMainWindow):
 
     def update_progress(self, message):
         self.status_display.setText(message)
+
+    def set_total_steps(self, total_steps):
+        self.progressbar.setMaximum(total_steps)
+        self.progressbar.setValue(0)
+
+    def update_step_progress(self, current_step):
+        self.progressbar.setValue(current_step)
     
     def show_error(self, error_message):
         """

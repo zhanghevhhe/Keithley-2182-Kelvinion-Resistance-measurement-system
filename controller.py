@@ -27,6 +27,8 @@ class MeasurementWorker(QObject):
     """
     finished = pyqtSignal()
     progress = pyqtSignal(str)
+    step_progress = pyqtSignal(int)
+    total_steps = pyqtSignal(int)
     new_resistance = pyqtSignal(float, dict)
     new_sweep = pyqtSignal(float, str, list, list)
     # 每测得一个 I-V 点就发出的信号：temp, channel, current, voltage
@@ -173,8 +175,12 @@ class MeasurementWorker(QObject):
         self.progress.emit("Measurement sequence started.")
 
         target_temps = self._get_all_target_temps()
+        total_steps = len(target_temps)
+        self.total_steps.emit(total_steps)
+        step = 0
+
         print("--- Target Temperature Sequence ---")
-        print(target_temps)
+        print(target_temps)        
         print("---------------------------------")
 
         # select operation handler once to keep branching localized
@@ -206,6 +212,10 @@ class MeasurementWorker(QObject):
             for temp_point in temp_points_in_block:
                 if not self._is_running:
                     break
+
+                step += 1
+                self.step_progress.emit(step)
+
 
                 self.update_set_temp.emit(temp_point)
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Setting temperature to {temp_point:.2f} K...")
@@ -432,6 +442,8 @@ class AppController(QObject):
         self.measurement_worker.progress.connect(self.view.update_progress)
         self.measurement_worker.update_set_temp.connect(self.view.update_set_temp_display)
         self.measurement_worker.block_changed.connect(self.on_block_changed)
+        self.measurement_worker.step_progress.connect(self.view.update_step_progress)
+        self.measurement_worker.total_steps.connect(self.view.set_total_steps)
  
             # 连接模式相关信号（根据需要连接 new_resistance 或 new_sweep）
         if operation == 'SweepIV':
