@@ -186,14 +186,6 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(self._create_sequence_panel(), 1) # 占据所有剩余空间
 
-        self.progressbar = QProgressBar()
-        self.progressbar.setValue(0)
-        self.progressbar.setTextVisible(True)
-        self.progressbar.setFormat("Progress: %v/%m")
-        self.progressbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        layout.addWidget(self.progressbar)
-
 
         # --- 下部 (固定在底部) ---
         bottom_widget = QWidget()
@@ -391,6 +383,13 @@ class MainWindow(QMainWindow):
         self.load_blocks_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
         self.load_blocks_btn.setToolTip("从 JSON 文件加载温度块配置")
         self.load_blocks_btn.setFixedWidth(36)
+
+        self.progressbar_steps = QProgressBar()
+        self.progressbar_steps.setValue(0)
+        self.progressbar_steps.setTextVisible(False)
+        self.progressbar_steps.setFormat("Progress: %v/%m")
+        self.progressbar_steps.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
         btns_layout = QHBoxLayout()
         btns_layout.addWidget(self.add_block_btn)
         btns_layout.addWidget(self.clear_all_btn)
@@ -398,7 +397,9 @@ class MainWindow(QMainWindow):
         btns_layout.addWidget(self.load_blocks_btn)
         btns_layout.addStretch()
         temp_layout.addWidget(self.scroll_area)
+        temp_layout.addWidget(self.progressbar_steps)
         temp_layout.addLayout(btns_layout)
+        
         self.temp_blocks_layout.addStretch()  # 只添加一个stretch
         return temp_group
 
@@ -565,11 +566,11 @@ class MainWindow(QMainWindow):
         self.status_display.setText(message)
 
     def set_total_steps(self, total_steps):
-        self.progressbar.setMaximum(total_steps)
-        self.progressbar.setValue(0)
+        self.progressbar_steps.setMaximum(total_steps)
+        self.progressbar_steps.setTextVisible(True)
 
     def update_step_progress(self, current_step):
-        self.progressbar.setValue(current_step)
+        self.progressbar_steps.setValue(current_step)
     
     def show_error(self, error_message):
         """
