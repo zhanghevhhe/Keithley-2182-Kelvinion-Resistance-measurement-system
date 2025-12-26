@@ -74,6 +74,10 @@ def get_labview_style():
         QPushButton#clearAllButton:hover { background-color: #f4b6bc; border-color: #f1aeb5; }
         QPushButton#clearAllButton:pressed { background-color: #f1aeb5; border-color: #eea6ac; }
         QToolButton:checked { background-color: #43a047; border: 1px solid #388e3c; }
+
+        QProgressBar#heaterbar { border: 1px solid #a0a0a0; border-radius: 1px; background-color: #e1e1e1; text-align: center; }
+        QProgressBar::chunk#heaterbar::chunk { background-color: #d00000; }
+
         QLineEdit { background-color: #ffffff; border: 1px solid #a0a0a0; border-radius: 4px; padding: 3px; }
         QLineEdit:read-only { background-color: #f0f0f0; }
         QLabel { color: #000; background-color: transparent; }

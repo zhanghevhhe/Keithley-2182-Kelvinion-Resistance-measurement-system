@@ -552,7 +552,7 @@ class MeasurementSystem(QObject):
 
         self.temp_display_timer = QTimer()
         self.temp_display_timer.timeout.connect(self._update_display_temperatures_powers)
-        self.temp_display_timer.start(1000)  # 每秒更新一次显示
+        self.temp_display_timer.start(300)  # 每300 ms更新一次显示
 
     def get_available_sources(self):
         """返回已成功初始化的可用仪器列表。"""
@@ -641,8 +641,8 @@ class MeasurementSystem(QObject):
 
     def _update_display_temperatures_powers(self):
         # 发送温度信号
-        sample_temp, chamber_temp = self.kelvinion.temperatures
         try:
+            sample_temp, chamber_temp = self.kelvinion.temperatures
             self._safe_emit(self.sample_temp_changed, sample_temp)
             self._safe_emit(self.chamber_temp_changed, chamber_temp)
         except Exception as e:
@@ -652,7 +652,7 @@ class MeasurementSystem(QObject):
             self._safe_emit(self.sample_temp_changed, 0.0)
             self._safe_emit(self.chamber_temp_changed, 0.0)
         
-        # 读取并发送功率信号
+        # 发送功率信号
         try:
             sample_power, chamber_power = self.kelvinion.powers
             self._safe_emit(self.sample_power_changed, sample_power)
@@ -660,7 +660,6 @@ class MeasurementSystem(QObject):
         except Exception as e:
             error_msg = f"Power read error: {e}"
             print(f"[Power Update] {error_msg}")
-            # 功率读取失败时不显示错误，只设置为0
             self._safe_emit(self.sample_power_changed, 0.0)
             self._safe_emit(self.chamber_power_changed, 0.0)
 

@@ -212,27 +212,17 @@ class MainWindow(QMainWindow):
         # 样品功率显示
         sample_power_label = QLabel("OUTPUT:")
         self.sample_power_bar = QProgressBar()
+        self.sample_power_bar.setObjectName("heaterbar")
         self.sample_power_bar.setMinimum(0)
         self.sample_power_bar.setMaximum(100)
         self.sample_power_bar.setValue(0)
         self.sample_power_bar.setFixedWidth(40)
-        self.sample_power_bar.setFixedHeight(15)  # 设置固定高度
+        self.sample_power_bar.setFixedHeight(10)  # 设置固定高度
         self.sample_power_bar.setTextVisible(False)  # 不显示文本，使用旁边的标签
-        # 设置进度条样式，确保填充色可见
-        heaterbar_style = """
-            QProgressBar {
-                border: 1px solid #a0a0a0;
-                border-radius: 3px;
-                background-color: #f0f0f0;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #d00000;
-            }
-        """
-        self.sample_power_bar.setStyleSheet(heaterbar_style)
+
         self.sample_power_value = QLabel("--")
-        self.sample_power_value.setFixedWidth(45)
+        self.sample_power_value.setFixedWidth(40)
+        self.sample_power_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         sample_power_row = QHBoxLayout()
         sample_power_row.setContentsMargins(0, 0, 0, 0)
         sample_power_row.setSpacing(4)
@@ -254,16 +244,17 @@ class MainWindow(QMainWindow):
         # 腔体功率显示
         chamber_power_label = QLabel("OUTPUT:")
         self.chamber_power_bar = QProgressBar()
+        self.chamber_power_bar.setObjectName("heaterbar")
         self.chamber_power_bar.setMinimum(0)
         self.chamber_power_bar.setMaximum(100)
         self.chamber_power_bar.setValue(0)
         self.chamber_power_bar.setFixedWidth(40)
-        self.chamber_power_bar.setFixedHeight(15)  # 设置固定高度
+        self.chamber_power_bar.setFixedHeight(10)  # 设置固定高度
         self.chamber_power_bar.setTextVisible(False)  # 不显示文本，使用旁边的标签
-        # 设置进度条样式，确保填充色可见
-        self.chamber_power_bar.setStyleSheet(heaterbar_style)
+
         self.chamber_power_value = QLabel("--")
-        self.chamber_power_value.setFixedWidth(45)
+        self.chamber_power_value.setFixedWidth(40)
+        self.chamber_power_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         chamber_power_row = QHBoxLayout()
         chamber_power_row.setContentsMargins(0, 0, 0, 0)
         chamber_power_row.setSpacing(4)
@@ -320,6 +311,7 @@ class MainWindow(QMainWindow):
         """
         status_group = QGroupBox("System Status")
         status_layout = QHBoxLayout(status_group)
+        
         # 系统就绪状态指示灯
         self.status_lamp = QCheckBox(); self.status_lamp.setChecked(True); self.status_lamp.setEnabled(False)
         self.status_lamp.setStyleSheet("""
