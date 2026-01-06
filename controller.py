@@ -96,7 +96,10 @@ class MeasurementWorker(QObject):
             chosen = str(self.sweep_params.get('channel', 'CH1'))
         except Exception:
             chosen = 'CH1'
-
+        
+        pins = snapshot[[ch for ch, _, _, _ in snapshot].index(chosen)][1]
+        print(pins)
+        
         # 如果 snapshot 中没有所选通道，则说明该通道未启用，直接跳过
         if not any(ch == chosen for ch, _, _, _ in snapshot):
             self.progress.emit(f"{chosen} not enabled for sweep; skipping.")
@@ -122,6 +125,8 @@ class MeasurementWorker(QObject):
                 if not self._is_running:
                     break
                 try:
+                    self.msys.matrix.connect(pins)
+                    time.sleep(0.1)
                     v = self.msys.k6221.measure_dc_current(cur)
                 except Exception as e:
                     print(f"[Sweep] sweep_onestep error for {chosen} at I={cur}: {e}")
@@ -391,7 +396,6 @@ class AppController(QObject):
     def _start_measurement(self):
         """开始测量序列。"""
         sequence_data = self.view.get_sequence_data()
-        print(sequence_data)
         if not sequence_data:
             QMessageBox.warning(self.view, "Warning", "No valid temperature blocks to run.")
             self._update_ui_lock_state()

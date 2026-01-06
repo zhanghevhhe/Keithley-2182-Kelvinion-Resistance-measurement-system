@@ -291,10 +291,11 @@ class Keithley6221:
         配置 2182 的数字滤波器设置
         """
         self._send_2182("VOLT:CHAN1:LPAS OFF")         # 关闭模拟低通滤波
-        self._send_2182("VOLT:CHAN1:DFIL:STAT ON")     # 开启数字滤波
+        
         self._send_2182(f"VOLT:CHAN1:DFIL:COUN {count}")
         self._send_2182(f"VOLT:CHAN1:DFIL:WIND {window}")
         self._send_2182(f"VOLT:CHAN1:DFIL:TCON {filter_type}")
+        self._send_2182("VOLT:CHAN1:DFIL:STAT ON")     # 开启数字滤波
         print(f"[2182] Filter configured: Count={count}, Window={window}")
 
     def get_reading(self, mode='FETCH'):
@@ -328,7 +329,7 @@ class Keithley6221:
             print(f"Error reading data using command '{cmd}': {e}")
             raise
 
-    def measure_dc_current(self, current, compliance=25, nplc=5, delay_s=1.2):
+    def measure_dc_current(self, current, compliance=25, nplc=5, delay_s=1.0):
         """
         执行单点 DC 电流输出并测量电压 (Sweep One Step)
         
@@ -344,9 +345,11 @@ class Keithley6221:
         self.configure_system_common()
         
         # 配置 2182 (测量)
-        self._send_2182("VOLT:RANG:AUTO ON")
-        self._send_2182(f"VOLT:NPLC {nplc}")
+        
+        
         self.configure_2182_filter(count=5, window=0.01)
+        self._send_2182(f"VOLT:NPLC {nplc}")
+        self._send_2182("VOLT:RANG:AUTO ON")
 
         # 配置 6221 (源)
         self.inst.write(f'CURR:COMP {compliance}')
@@ -354,25 +357,22 @@ class Keithley6221:
         
         # 设置电流和源延时（等待稳定时间）
         self.inst.write(f':SOUR:CURR {current:.3e}')
-        self.inst.write(f'SOUR:DEL {delay_s}') 
-        
-        # 2. 设置单点触发并打开输出
-        self.inst.write('TRIG:COUN 1') # 只触发一次测量
-        self.inst.write('TRIG:SOUR IMM') # 立即触发 (等待源稳定后即触发)
-        self.inst.write('OUTP ON') # 打开电流输出
-        
-        # 3. 发起测量并等待完成
-        # INIT 命令等待 SOUR:DEL 完成后，驱动 2182 完成一次读数，然后阻塞。
-        print(f"[DC - Reliable] Initiating measurement I={current:.3e} A...")
-        self.inst.write('INIT')
-        
-        # *OPC? 确保 INITIATE 序列（源稳定+测量）完全完成。
-        self.inst.query('*OPC?') 
+        self.inst.write('OUTPUT ON')
+        self.inst.write('*OPC')
+
+        self._send_2182('TRAC:CLE') 
+
+        time.sleep(delay_s)  # 确保输出开启命令生效
+
+        self.inst.write('INITIATE:IMMEDIATE')
         
         try:
-            # 4. 获取最新的、已完成的测量结果
-            # 这里强制使用 'FETCH' 模式
-            voltage = self.get_reading(mode='FETCH')
+            self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND ":SENSe:DATA:FRESh?"')
+            self.inst.write('SYSTEM:COMMUNICATE:SERIAL:ENTER?')
+            time.sleep(0.5)
+            raw_data = self.inst.read()
+            print(f'raw data = {raw_data}')
+            voltage = float(raw_data.split(',')[0])
             
             print(f"[DC - Reliable] Measurement complete. V={voltage:.6e} V")
             return voltage
@@ -381,9 +381,10 @@ class Keithley6221:
             raise
         finally:
             # 单点测量完成后，关闭输出是安全惯例
-            self.inst.write('OUTP OFF') 
+            self.inst.write('SOURCE:SWEEP:ABORT')
+            self.inst.write('OUTP OFF')
 
-    def measure_delta_mode(self, current, voltage_range=0.01, compliance=10, duration=5.0):
+    def measure_delta_mode(self, current, voltage_range=0.01, compliance=10, duration=5.0, ave_count=13):
         """
         执行 Delta 模式测量 (正负电流交替消除热电势)
         
@@ -393,6 +394,7 @@ class Keithley6221:
         :param voltage_range: 2182 电压量程 (可以是字符串 '10mV' 或 浮点数 0.01)
         :param compliance: 顺从电压
         :param duration: 测量持续时间 (秒)
+        :param ave_count: 2182 平均计数
         """
         # 处理电压量程参数
         v_range_val = voltage_range
@@ -411,7 +413,7 @@ class Keithley6221:
         # 2182 Average 设置 (这是 Delta 模式的关键配合)
         self.inst.write('SENS:AVER:TCON MOV')
         self.inst.write('SENS:AVER:WIND 0.1')
-        self.inst.write('SENS:AVER:COUN 6')
+        self.inst.write(f'SENS:AVER:COUN {ave_count}')
         self.inst.write('SENS:AVER ON')
 
         # 配置 6221 Delta 参数

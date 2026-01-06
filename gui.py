@@ -387,6 +387,7 @@ class MainWindow(QMainWindow):
         self.progressbar_steps = QProgressBar()
         self.progressbar_steps.setValue(0)
         self.progressbar_steps.setTextVisible(False)
+        self.progressbar_steps.setFixedHeight(20)
         self.progressbar_steps.setFormat("Progress: %v/%m")
         self.progressbar_steps.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -670,6 +671,68 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[GUI] handle_new_sweep error: {e}")
 
+    def handle_new_sweep_point(self, temp, ch_name, current, voltage):
+        """Incrementally add a single I-V point to the SweepIV plot.
+
+        This is called for each measured I-V point to support realtime plotting
+        and incremental saving performed by the controller.
+        """
+        try:
+            label = f"{float(temp):.3f} K"
+
+            # color assignment (reuse same temp label)
+            if label in self.sweep_color_map:
+                color = self.sweep_color_map[label]
+            else:
+                color = pg.intColor(self.sweep_color_index, hues=12, values=255)
+                self.sweep_color_map[label] = color
+                self.sweep_color_index += 1
+
+            pen = pg.mkPen(color=color, width=2)
+
+            # Ensure legend exists
+            try:
+                if self.sweep_legend is None:
+                    self.sweep_legend = self.sweep_plot.addLegend(offset=(10, 10))
+            except Exception:
+                self.sweep_legend = None
+
+            # Append to existing trace or create a new one
+            try:
+                if label in self.sweep_traces:
+                    pdi = self.sweep_traces[label]
+                    try:
+                        x = list(pdi.xData) if hasattr(pdi, 'xData') else []
+                        y = list(pdi.yData) if hasattr(pdi, 'yData') else []
+                    except Exception:
+                        x, y = [], []
+                    x.append(float(voltage)); y.append(float(current))
+                    pdi.setData(x, y, pen=pen, symbol='o', symbolSize=6, symbolBrush=color)
+                else:
+                    pdi = self.sweep_plot.plot([float(voltage)], [float(current)], pen=pen, symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
+                    self.sweep_traces[label] = pdi
+            except Exception:
+                # As a fallback, clear and replot the single point
+                try:
+                    self.sweep_plot.plot([float(voltage)], [float(current)], pen=pen, symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
+                except Exception:
+                    pass
+
+            self.sweep_plot.setTitle(f"IV Sweep - {ch_name}")
+        except Exception as e:
+            print(f"[GUI] handle_new_sweep_point error: {e}")
+
+    def clear_sweep_plot(self):
+        """Clear sweep plot and reset sweep-related state."""
+        try:
+            self.sweep_plot.clear()
+            self.sweep_traces.clear()
+            self.sweep_color_map.clear()
+            self.sweep_color_index = 0
+            self.sweep_legend = None
+        except Exception as e:
+            print(f"[GUI] clear_sweep_plot error: {e}")
+
     def update_running_status(self, is_running):
         self.run_status_lamp.setChecked(is_running)
 
@@ -753,7 +816,6 @@ class MainWindow(QMainWindow):
                         ch_name = h.split('_')[1].split('[')[0]
                         ch_indices[ch_name] = i
                 data_by_ch = {ch: {'x': [], 'y': []} for ch in ch_indices}
-                print(ch_indices)
                 for row in reader:
                     if len(row) < max(ch_indices.values())+1:
                         continue
