@@ -30,6 +30,7 @@ class KelvinionController:
         self.inst.data_bits = 8
         self.inst.stop_bits = StopBits.one
         self.temperatures = (0.0, 0.0)  # (sample_temp, chamber_temp)
+        self.powers = (0.0, 0.0)  # (sample_power, chamber_power)
 
         # 尝试安全查询 IDN，若失败则继续让上层处理异常
         try:
@@ -48,6 +49,9 @@ class KelvinionController:
         with self._lock:
             return self.inst.query(cmd)
     # -----------------------------------
+
+    #--------------------------------------------------
+    # 设置/读取仪器参数：设置用set，读取用read
 
     def set_enable(self, loop: str = 'A', enable: bool = True):
         state = 'HIGH' if enable else 'OFF'
@@ -150,19 +154,11 @@ class KelvinionController:
             self.set_chamber_range(target)
         print(f"[Kelvinion] Set loop {loop} to {target:.2f} K")
 
-    def get_set_temperature(self, channel: str = 'A') -> float:  # A\B
+    def read_set_temperature(self, channel: str = 'A') -> float:  # A\B
         raw = self._safe_query(f"[READ:SETP:{channel}]")
         return float(raw[1:-3])
-
-    def get_sample_temperature(self):
-        """从属性获取样品温度（F通道，temperature第一个元素）"""
-        return self.temperatures[0]
     
-    def get_chamber_temperature(self):
-        """从属性获取样品腔温度（D通道，temperature第二个元素）"""
-        return self.temperatures[1]
-    
-    def get_temperatures(self):
+    def read_temperatures(self):
         """
         原子性获取样品(F)和腔体(D)温度，返回 (sample_temp, chamber_temp)。
         UI / 外部调用应优先使用此接口避免并发交错。
@@ -175,11 +171,47 @@ class KelvinionController:
             t_d = float(raw_d[1:-3])
         return t_f, t_d
     
+    def read_power(self, channel: str = 'A') -> float:  # A\B
+        raw = self._safe_query(f"[READ:POWER:{channel}]")
+        return float(raw[1:-3])
+    
+    def read_powers(self):
+        """
+        原子性获取样品(F)和腔体(D)功率，返回 (sample_power, chamber_power)。
+        UI / 外部调用应优先使用此接口避免并发交错。
+        """
+        with self._lock:
+            raw_a = self.inst.query(f"[READ:POWER:A]")
+            p_a = float(raw_a[1:-3])
+            raw_b = self.inst.query(f"[READ:POWER:B]")
+            p_b = float(raw_b[1:-3])
+        return p_a, p_b
+
+    #--------------------------------------------------
+    # 从缓存获取数据
+    def get_sample_power(self):
+        '''从属性获取样品功率（LOOPA, powers第一个元素）'''
+        return self.powers[0]
+    
+    def get_chamber_power(self):
+        '''从属性获得样品腔功率（LOOPB,powers第二个元素）'''
+        return self.powers[1]
+
+    def get_sample_temperature(self):
+        """从属性获取样品温度（F通道，temperature第一个元素）"""
+        return self.temperatures[0]
+    
+    def get_chamber_temperature(self):
+        """从属性获取样品腔温度（D通道，temperature第二个元素）"""
+        return self.temperatures[1]
+    
     def _tolerance(self, target: float) -> float:
         for entry in self.pidramp["tolerance_ranges"]:
             if entry["min"] <= target < entry["max"]:
                 return entry["tolerance"]
         return 0.1
+    #--------------------------------------------------
+    # 其他功能语句
 
     def wait_for_stable(self, target: float, loop: str = 'A', is_running_checker=None):
         tol = self._tolerance(target)
@@ -218,92 +250,209 @@ class KelvinionController:
 
 class Keithley6221:
     """
-    Keithley 6221+ Keithley 2182 源表方法。源表通过RS232+TRIGGER线互联，GPIB线只连接6221
+    Keithley 6221 (Source) + Keithley 2182 (Nanovoltmeter) 组合控制类。
+    硬件连接假设：
+    1. PC -> GPIB -> 6221
+    2. 6221 -> RS232 + Trigger Link -> 2182
     """
     def __init__(self, resource):
+        """
+        :param resource: pyvisa resource object (已经打开的资源实例)
+        """
         self.inst = resource
+        # 初始化仪器状态
+        self.reset()
+        print("[System] Initialized Keithley 6221 + 2182 system")
+
+    def reset(self):
+        """复位仪器并清除状态寄存器"""
         self.inst.write("*RST")
         self.inst.write('*CLS')
-        print("[6221] Initialized")
+        time.sleep(0.5) # 给仪器一点复位时间
 
-    def reading_latest(self) -> float:
-        self.inst.write(':SENSe:DATA:LATest?')
-        time.sleep(0.01)
-        return float(self.inst.read().split(',')[0])
+    def _send_2182(self, command):
+        """
+        辅助函数：通过 6221 的串口透传指令给 2182
+        """
+        # 6221 要求串口指令用双引号包裹
+        cmd_str = f'SYSTEM:COMMUNICATE:SERIAL:SEND "{command}"'
+        self.inst.write(cmd_str)
 
-    def reading_fresh(self) -> float:
-        self.inst.write(':SENSe:DATA:FRESh?')
-        time.sleep(0.01)
-        return float(self.inst.read())
+    def configure_system_common(self):
+        """
+        配置通用的系统设置 (Shielding, Earth, Units)
+        """
+        self.inst.write('OUTPut:LTEarth OFF')   # 关闭 Low Terminal Earth
+        self.inst.write('OUTPUT:ISHIELD OLOW')  # Inner Shield Output Low
+        self.inst.write('UNIT:VOLT:DC V')       # 设置单位
 
-    def sweep_onestep(self, current, Vrange='10mV'):
-        if Vrange == '10mV':
-            V = '0.01'
-        elif Vrange == '100mV':
-            V = '0.1'
-        elif Vrange == '1V':
-            V = '1'
-        elif Vrange == '10V':
-            V = '10'
-        self.inst.write('*RST')
-        self.inst.write('*CLS')        
-        self.inst.write('OUTPut:LTEarth OFF')
-        self.inst.write('OUTPUT:ISHIELD OLOW')
-        self.inst.write('UNIT:VOLT:DC V')
-        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:LPAS OFF"')
-        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:WIND 0.01"')
-        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:COUN 13"')
-        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:TCON MOV"')
-        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:CHAN1:DFIL:STAT ON"')
-        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:NPLC 5"')
-        self.inst.write(f'SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:RANG {V}"')
-        self.inst.write('CURR:COMP 25')
-        self.inst.write('SOUR:CURR:RANG:AUTO ON')
-        self.inst.write(f':SOUR:CURR:{current:.3e}')
+    def configure_2182_filter(self, count=5, window=0.01, filter_type='MOV'):
+        """
+        配置 2182 的数字滤波器设置
+        """
+        self._send_2182("VOLT:CHAN1:LPAS OFF")         # 关闭模拟低通滤波
+        
+        self._send_2182(f"VOLT:CHAN1:DFIL:COUN {count}")
+        self._send_2182(f"VOLT:CHAN1:DFIL:WIND {window}")
+        self._send_2182(f"VOLT:CHAN1:DFIL:TCON {filter_type}")
+        self._send_2182("VOLT:CHAN1:DFIL:STAT ON")     # 开启数字滤波
+        print(f"[2182] Filter configured: Count={count}, Window={window}")
+
+    def get_reading(self, mode='FETCH'):
+        """
+        获取读数。
+        
+        :param mode: 读取模式，支持 'FETCH' (获取最新测量结果), 'LATEST' (获取最新存储读数), 
+                     或 'FRESH' (等待新的测量读数)。
+        :raises ValueError: 如果传入的 mode 无效。
+        """
+        # 定义允许的模式及其对应的 SCPI 命令，提高健壮性
+        ALLOWED_MODES = {
+            'FETCH': ':FETC?',           # 获取 INIT/ARM 序列完成后的结果 (推荐用于同步测量)
+            'LATEST': ':SENSe:DATA:LATest?', # 获取存储器中最新的读数
+            'FRESH': ':SENSe:DATA:FRESh?'    # 请求新读数并等待其完成
+        }
+        
+        mode_upper = mode.upper()
+        
+        if mode_upper not in ALLOWED_MODES:
+            # 模式无效时抛出明确的错误
+            raise ValueError(f"Invalid reading mode '{mode}'. Must be one of: {', '.join(ALLOWED_MODES.keys())}")
+            
+        cmd = ALLOWED_MODES[mode_upper]
+        
+        try:
+            raw_data = self.inst.query(cmd)
+            # 数据格式通常是 "数值, 状态, ...", 我们只取第一个
+            return float(raw_data.split(',')[0])
+        except Exception as e:
+            print(f"Error reading data using command '{cmd}': {e}")
+            raise
+
+    def measure_dc_current(self, current, compliance=25, nplc=5, delay_s=1.0):
+        """
+        执行单点 DC 电流输出并测量电压 (Sweep One Step)
+        
+        *** 关键优化：采用 INIT + FETC? 确保读取的是新测量值 ***
+
+        :param current: 输出电流 (Amp)
+        :param compliance: 顺从电压 (Volt)
+        :param nplc: 积分周期 (Number of Power Line Cycles), 5 是慢速高精度
+        :param delay_s: 输出电流稳定等待时间（秒）。通过 SOUR:DELAY 实现，比 time.sleep 更可靠。
+        """
+        # 1. 完整设置仪器状态
+        self.reset()
+        self.configure_system_common()
+        
+        # 配置 2182 (测量)
+        
+        
+        self.configure_2182_filter(count=5, window=0.01)
+        self._send_2182(f"VOLT:NPLC {nplc}")
+        self._send_2182("VOLT:RANG:AUTO ON")
+
+        # 配置 6221 (源)
+        self.inst.write(f'CURR:COMP {compliance}')
+        self.inst.write(':SOUR:CURR:RANG:AUTO ON')
+        
+        # 设置电流和源延时（等待稳定时间）
+        self.inst.write(f':SOUR:CURR {current:.3e}')
         self.inst.write('OUTPUT ON')
         self.inst.write('*OPC')
-        time.sleep(1.2)
-        v = self.reading_latest()
-        self.inst.write('OUTPUT OFF')
-        return v
-    
-    def delta_measure(self, current, Vrange='10mV'):
-        if Vrange == '10mV':
-            V = '0.01'
-        elif Vrange == '100mV':
-            V = '0.1'
-        elif Vrange == '1V':
-            V = '1'
-        elif Vrange == '10V':
-            V = '10'
 
-        self.inst.write('*RST')
-        self.inst.write('*CLS')
-        self.inst.write('OUTPut:LTEarth OFF')
-        self.inst.write('OUTPUT:ISHIELD OLOW')
-        self.inst.write('UNIT:VOLT:DC V')
+        self._send_2182('TRAC:CLE') 
+
+        time.sleep(delay_s)  # 确保输出开启命令生效
+
+        self.inst.write('INITIATE:IMMEDIATE')
+        
+        try:
+            self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND ":SENSe:DATA:FRESh?"')
+            self.inst.write('SYSTEM:COMMUNICATE:SERIAL:ENTER?')
+            time.sleep(0.5)
+            raw_data = self.inst.read()
+            print(f'raw data = {raw_data}')
+            voltage = float(raw_data.split(',')[0])
+            
+            print(f"[DC - Reliable] Measurement complete. V={voltage:.6e} V")
+            return voltage
+        except Exception as e:
+            print(f"Error during DC measurement fetch: {e}")
+            raise
+        finally:
+            # 单点测量完成后，关闭输出是安全惯例
+            self.inst.write('SOURCE:SWEEP:ABORT')
+            self.inst.write('OUTP OFF')
+
+    def measure_delta_mode(self, current, voltage_range=0.01, compliance=10, duration=5.0, ave_count=13):
+        """
+        执行 Delta 模式测量 (正负电流交替消除热电势)
+        
+        *** 优化：TRAC:CLE 确保平均值基于本次测量 ***
+        
+        :param current: 电流幅值 (Amp)
+        :param voltage_range: 2182 电压量程 (可以是字符串 '10mV' 或 浮点数 0.01)
+        :param compliance: 顺从电压
+        :param duration: 测量持续时间 (秒)
+        :param ave_count: 2182 平均计数
+        """
+        # 处理电压量程参数
+        v_range_val = voltage_range
+        if isinstance(voltage_range, str):
+            v_map = {'10mV': 0.01, '100mV': 0.1, '1V': 1, '10V': 10}
+            v_range_val = v_map.get(voltage_range, 0.01)
+
+        # Delta 模式必须从复位状态开始以确保同步
+        self.reset()
+        self.configure_system_common()
+        
+        # 配置 2182
+        self._send_2182(f"VOLT:RANG {v_range_val}")
+        self._send_2182("VOLT:NPLC 5")
+        
+        # 2182 Average 设置 (这是 Delta 模式的关键配合)
         self.inst.write('SENS:AVER:TCON MOV')
         self.inst.write('SENS:AVER:WIND 0.1')
-        self.inst.write('SENS:AVER:COUN 6')
+        self.inst.write(f'SENS:AVER:COUN {ave_count}')
         self.inst.write('SENS:AVER ON')
-        self.inst.write('SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:NPLC 5"')
-        self.inst.write(f'SYSTEM:COMMUNICATE:SERIAL:SEND "VOLT:RANG {V}"')
-        self.inst.write('CURRent:COMPliance 10')
+
+        # 配置 6221 Delta 参数
+        self.inst.write(f'CURRent:COMPliance {compliance}')
         self.inst.write(f'SOURCE:DELTA:HIGH {current:.3e}')
         self.inst.write(f'SOURCE:DELTA:LOW {-current:.3e}')
-        self.inst.write('SOURCE:DELTA:DELAY 0.1')
-        self.inst.write('SOURCE:DELTA:COUNT INF')
+        self.inst.write('SOURCE:DELTA:DELAY 0.1') # 电流反转后的稳定延时
+        self.inst.write('SOURCE:DELTA:COUNT INF') # 无限循环，直到我们手动停止
+        
+        # 启动 Delta
+        print("[Delta] Arming and initiating Delta mode...")
+        
+        # 优化点: 清空 2182 测量缓冲区，确保平均值基于本次测量
+        self._send_2182('TRAC:CLE') 
+        
         self.inst.write('SOURCE:DELTA:ARM')
         self.inst.write('INITIATE:IMMEDIATE')
 
-        time.sleep(5)
-        v = self.reading_latest()
+        # 等待测量数据稳定，让 Delta 模式运行一段时间以进行充分的平均
+        time.sleep(duration)
+        
+        try:
+            # 读取 Delta 读数 (LATEST 是 2182 自动计算的平均值)
+            voltage = self.get_reading(mode='LATEST')
+        finally:
+            # 停止 Delta 模式并关闭输出
+            self.inst.write('SOURCE:SWEEP:ABORT')
+            self.inst.write('OUTPUT OFF')
+            
+        print(f"[Delta] Result V: {voltage:.6e} V (Avg over {duration}s)")
+        return voltage
 
-        self.inst.write('SOURCE:SWEEP:ABORT')  # 关闭
-
-        print(f"[6221] Delta Avg V: {v:.6e} V")
-        return v
-
+    def close(self):
+        """安全关闭"""
+        try:
+            self.inst.write('OUTPUT OFF')
+        except:
+            pass
+        # 注意：这里不关闭 resource，因为 resource 是外部传入的，应由外部关闭
 
 class SwitchMatrix3706:
     """
@@ -343,6 +492,8 @@ class SwitchMatrix3706:
 class MeasurementSystem(QObject):
     sample_temp_changed = pyqtSignal(float)    # 样品温度（F通道）
     chamber_temp_changed = pyqtSignal(float)   # 样品腔温度（D通道）
+    sample_power_changed = pyqtSignal(float)   # 样品功率（0~100%）
+    chamber_power_changed = pyqtSignal(float)   # 腔体功率（0~100%）
     error_occurred = pyqtSignal(str)           # 错误信息信号
     warning_occurred = pyqtSignal(str)         # 警告信息信号
 
@@ -382,11 +533,6 @@ class MeasurementSystem(QObject):
         self.save_path = base_dir
         self.lock = threading.Lock()
 
-        self.rm = None
-        self.kelvinion = None
-        self.k6221 = None
-        self.matrix = None
-
         # 先初始化硬件，若失败则捕获异常并发送错误信号
         while True:
             try:
@@ -401,14 +547,14 @@ class MeasurementSystem(QObject):
             
 
         # 温度监控定时器 —— 仅在成功初始化硬件后启用
-            
+
         self.temp_timer = QTimer()
-        self.temp_timer.timeout.connect(self._update_hardware_temperatures)
+        self.temp_timer.timeout.connect(self._update_hardware_temperatures_powers)
         self.temp_timer.start(200)  # 每200 ms更新一次硬件温度
 
         self.temp_display_timer = QTimer()
-        self.temp_display_timer.timeout.connect(self._update_display_temperatures)
-        self.temp_display_timer.start(1000)  # 每秒更新一次显示
+        self.temp_display_timer.timeout.connect(self._update_display_temperatures_powers)
+        self.temp_display_timer.start(300)  # 每300 ms更新一次显示
 
     def get_available_sources(self):
         """返回已成功初始化的可用仪器列表。"""
@@ -462,14 +608,6 @@ class MeasurementSystem(QObject):
                 self.channels[ch_name] = ch_data
         self.save_channels_config()
 
-    def get_csv_header(self):
-        """动态生成CSV文件的表头。"""
-        header = ["Timestamp", "Temperature[K]"]
-        channel_names = sorted(self.channels.keys())
-        for ch_name in channel_names:
-            header.append(f"Resistance_{ch_name}[Ohm]")
-        return header
-
     def get_channel_info_for_display(self, channel_name):
         """[重构] 获取单个通道用于UI显示的信息（标题）。"""
         if channel_name not in self.channels:
@@ -488,26 +626,25 @@ class MeasurementSystem(QObject):
             "enabled": is_enabled
         }
 
-
-
-    def _update_hardware_temperatures(self):
+    def _update_hardware_temperatures_powers(self):
         """
         定期从硬件获取温度数据并发送信号。
         这个方法由定时器每秒调用一次。
         """
         try:
             # 原子性一次性读取样品与腔体温度，避免交叉读写导致错位或交替值
-            self.kelvinion.temperatures = self.kelvinion.get_temperatures()
+            self.kelvinion.temperatures = self.kelvinion.read_temperatures()
+            self.kelvinion.powers = self.kelvinion.read_powers()
         except Exception as e:
             error_msg = f"Failed to read temperatures from Kelvinion: {e}"
             print(f"[Temperature Update] {error_msg}")
             self._safe_emit(self.error_occurred, error_msg)
             self.kelvinion.temperatures = 0.0, 0.0
 
-    def _update_display_temperatures(self):
+    def _update_display_temperatures_powers(self):
         # 发送温度信号
-        sample_temp, chamber_temp = self.kelvinion.temperatures
         try:
+            sample_temp, chamber_temp = self.kelvinion.temperatures
             self._safe_emit(self.sample_temp_changed, sample_temp)
             self._safe_emit(self.chamber_temp_changed, chamber_temp)
         except Exception as e:
@@ -516,11 +653,19 @@ class MeasurementSystem(QObject):
             self._safe_emit(self.error_occurred, error_msg)
             self._safe_emit(self.sample_temp_changed, 0.0)
             self._safe_emit(self.chamber_temp_changed, 0.0)
+        
+        # 发送功率信号
+        try:
+            sample_power, chamber_power = self.kelvinion.powers
+            self._safe_emit(self.sample_power_changed, sample_power)
+            self._safe_emit(self.chamber_power_changed, chamber_power)
+        except Exception as e:
+            error_msg = f"Power read error: {e}"
+            print(f"[Power Update] {error_msg}")
+            self._safe_emit(self.sample_power_changed, 0.0)
+            self._safe_emit(self.chamber_power_changed, 0.0)
 
     def measure_single_channel(self, ch_name, channel_config):
-        # --- 使用你提供的 delta_measure 方法进行真实测量 ---
-        # 为避免多个并发测量导致仪器通信冲突和超时，使用系统级锁序列化对 matrix/k6221 的访问。
-        # 同时在 delta_measure 出现超时的情况下进行有限次数的重试。
         attempts = 3
         backoff = 0.5
         try:
@@ -543,7 +688,7 @@ class MeasurementSystem(QObject):
                 voltage = None
                 for attempt in range(1, attempts + 1):
                     try:
-                        voltage = self.k6221.delta_measure(current, Vrange)
+                        voltage = self.k6221.measure_delta_mode(current, Vrange)
                         last_exc = None
                         break
                     except Exception as e:
@@ -551,7 +696,7 @@ class MeasurementSystem(QObject):
                         msg = str(e)
                         print(f"[System] delta_measure attempt {attempt} failed for {ch_name}: {msg}")
                         # 在超时或通信错误时，尝试发送中止并稍后重试
-                        self.k6221.inst.write('SOURCE:SWEEP:ABORT')
+                        self.k6221.close()
                         time.sleep(backoff * attempt)
 
                 if last_exc is not None and voltage is None:
@@ -573,7 +718,7 @@ class MeasurementSystem(QObject):
             self._safe_emit(self.error_occurred, error_msg)
             # 如果 delta_measure 中途出错，尝试中止扫描
             try:
-                self.k6221.inst.write('SOURCE:SWEEP:ABORT')
+                self.k6221.close()
                 print("[K6221] Sent ABORT command due to error.")
             except Exception as abort_e:
                 print(f"Error sending ABORT command: {abort_e}")

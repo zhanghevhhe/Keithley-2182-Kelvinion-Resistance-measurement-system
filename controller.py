@@ -7,6 +7,7 @@ controller.py: Contains the main application logic and state management.
 import time
 import os
 import csv
+import json
 import datetime
 import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal, QThread
@@ -26,11 +27,16 @@ class MeasurementWorker(QObject):
     """
     finished = pyqtSignal()
     progress = pyqtSignal(str)
-    new_data = pyqtSignal(float, dict)
+    step_progress = pyqtSignal(int)
+    total_steps = pyqtSignal(int)
+    new_resistance = pyqtSignal(float, dict)
+    new_sweep = pyqtSignal(float, str, list, list)
+    # 每测得一个 I-V 点就发出的信号：temp, channel, current, voltage
+    new_sweep_point = pyqtSignal(float, str, float, float)
     update_set_temp = pyqtSignal(float)
     block_changed = pyqtSignal(int)
 
-    def __init__(self, msys, sequence):
+    def __init__(self, msys, sequence, operation='Resistance', sweep_params=None):
         """
         Args:
             msys: MeasurementSystem 实例（model）
@@ -40,6 +46,101 @@ class MeasurementWorker(QObject):
         self.msys = msys
         self.sequence = sequence or []
         self._is_running = True
+        # operation: 'Resistance' or 'SweepIV' (kept as a simple label);
+        # select the handler at runtime to avoid scattered mode checks
+        self.operation = operation
+        self.sweep_params = sweep_params or {}
+
+    def _handle_resistance(self, snapshot, temp_point):
+        """Perform resistance measurements for the provided snapshot.
+        Measures all enabled channels, emits new_data signal, and handles all data processing.
+        """
+        results = {}
+        for ch_name, pins, current_val, vrange in snapshot:
+            if not self._is_running:
+                break
+            self.progress.emit(f"Measuring channel: {ch_name}")
+            channel_config = {
+                'pins': pins,
+                'current': current_val,
+                'voltage_range': vrange
+            }
+            try:
+                res = self.msys.measure_single_channel(ch_name, channel_config)
+            except Exception as e:
+                print(f"[Controller] Measurement error for {ch_name}: {e}")
+                res = float('nan')
+            results[ch_name] = res
+            # conservative delay between channels
+            time.sleep(0.6)
+        
+        # Emit data signal directly within the handler (use actual measured sample temp)
+        if not self._is_running:
+            return
+        try:
+            temp = self.msys.kelvinion.get_sample_temperature()
+        except Exception:
+            temp = temp_point
+        # Use the correctly named signal
+        try:
+            self.new_resistance.emit(temp, results)
+        except Exception:
+            pass
+
+    def _handle_sweep(self, snapshot, temp_point):
+        """Perform IV sweep for a single chosen channel from snapshot.
+        Handles all sweep measurement, data collection, and signal emission directly.
+        """
+        # 从 sweep_params 中读取用户选择的通道（UI 中可选 CH1..CH4）
+        try:
+            chosen = str(self.sweep_params.get('channel', 'CH1'))
+        except Exception:
+            chosen = 'CH1'
+        
+        pins = snapshot[[ch for ch, _, _, _ in snapshot].index(chosen)][1]
+        print(pins)
+        
+        # 如果 snapshot 中没有所选通道，则说明该通道未启用，直接跳过
+        if not any(ch == chosen for ch, _, _, _ in snapshot):
+            self.progress.emit(f"{chosen} not enabled for sweep; skipping.")
+            return
+
+        # build current sequence from sweep_params
+        try:
+            start = float(self.sweep_params.get('start', 1e-6))
+            stop = float(self.sweep_params.get('stop', 1e-3))
+            step = float(self.sweep_params.get('step', 1e-6))
+        except Exception:
+            start, stop, step = 1e-6, 1e-3, 1e-6
+
+        currents = self._linear_generate(start, stop, step)
+        voltages = []
+
+        # 使用设定温度 temp_point 作为图例标签（避免实时抖动）
+        temp = float(temp_point)
+
+        # do NOT switch matrix channels for sweep; assume appropriate wiring
+        with self.msys.lock:
+            for cur in currents:
+                if not self._is_running:
+                    break
+                try:
+                    self.msys.matrix.connect(pins)
+                    time.sleep(0.1)
+                    v = self.msys.k6221.measure_dc_current(cur)
+                except Exception as e:
+                    print(f"[Sweep] sweep_onestep error for {chosen} at I={cur}: {e}")
+                    v = float('nan')
+                voltages.append(v)
+                # 逐点发射，用于实时绘图与增量保存（使用设定温度作为标签）
+                try:
+                    self.new_sweep_point.emit(temp, chosen, cur, v)
+                except Exception:
+                    pass
+
+        if not self._is_running:
+            return
+        self.new_sweep.emit(temp, chosen, currents, voltages)
 
     def stop(self):
         """请求停止正在运行的测量循环（由 controller 调用）。"""
@@ -79,16 +180,35 @@ class MeasurementWorker(QObject):
         self.progress.emit("Measurement sequence started.")
 
         target_temps = self._get_all_target_temps()
+        total_steps = len(target_temps)
+        self.total_steps.emit(total_steps)
+        step = 0
+
         print("--- Target Temperature Sequence ---")
-        print(target_temps)
+        print(target_temps)        
         print("---------------------------------")
+
+        # select operation handler once to keep branching localized
+        if getattr(self, 'operation', 'Resistance') == 'SweepIV':
+            handler = self._handle_sweep
+        elif getattr(self, 'operation', 'Resistance') == 'Resistance':
+            handler = self._handle_resistance
 
         for i, block in enumerate(self.sequence):
             if not self._is_running:
                 break
+            
+            try:
+                start_temp = float(block['start'])
+                stop_temp = float(block['stop'])
+                step_temp = float(block['step'])
+            except Exception:  
+                self.progress.emit(f"Block {i+1}: Invalid parameters. Skipping.")
+                continue
 
             self.block_changed.emit(i)
-            temp_points_in_block = self._linear_generate(float(block['start']), float(block['stop']), float(block['step']))
+            
+            temp_points_in_block = self._linear_generate(start_temp, stop_temp, step_temp)
 
             if not temp_points_in_block:
                 self.progress.emit(f"Block {i+1}: Invalid parameters or empty sequence. Skipping.")
@@ -97,6 +217,10 @@ class MeasurementWorker(QObject):
             for temp_point in temp_points_in_block:
                 if not self._is_running:
                     break
+
+                step += 1
+                self.step_progress.emit(step)
+
 
                 self.update_set_temp.emit(temp_point)
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Setting temperature to {temp_point:.2f} K...")
@@ -112,45 +236,25 @@ class MeasurementWorker(QObject):
 
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Measuring at {temp_point:.2f} K...")
 
-                resistances = {}
+                
                 # 采集一份已启用通道的参数快照，避免在测量过程中被 UI 或其它线程修改
                 enabled_channels = [item for item in self.msys.channels.items() if item[1].get('enabled', False)]
                 snapshot = []
                 for ch_name, ch_config in enabled_channels:
-
                     pins = list(ch_config.get('pins', [])) if ch_config.get('pins') is not None else []
                     current_val = float(ch_config.get('current', 1e-6))
                     vrange = ch_config.get('voltage_range', '1V')
                     snapshot.append((ch_name, pins, current_val, vrange))
-
-                # 顺序测量快照中的每个通道
-                for ch_name, pins, current_val, vrange in snapshot:
-                    if not self._is_running:
-                        break
-
-                    self.progress.emit(f"Measuring channel: {ch_name}")
-
-                    channel_config = {
-                        'pins': pins,
-                        'current': current_val,
-                        'voltage_range': vrange
-                    }
-
-                    try:
-                        res = self.msys.measure_single_channel(ch_name, channel_config)
-                    except Exception as e:
-                        print(f"[Controller] Measurement error for {ch_name}: {e}")
-                        res = float('nan')
-                    resistances[ch_name] = res
-
-                    # 在通道间添加保守延迟
-                    time.sleep(0.6)
+                # 执行所选操作（阻抗测量或 Sweep）
+                # 每个 handler 负责自己的数据处理与信号发送，避免在主循环中进行类型判断或重复发射
+                try:
+                    # 将当前设定温度传入 handler，以便使用设定温度作为图例标签或其它目的
+                    handler(snapshot, temp_point)
+                except Exception as e:
+                    print(f"[Controller] Operation handler error at temp {temp_point}: {e}")
 
                 if not self._is_running:
                     break
-
-                temp = self.msys.kelvinion.get_sample_temperature()
-                self.new_data.emit(temp, resistances)
 
             if not self._is_running:
                 break
@@ -189,6 +293,8 @@ class AppController(QObject):
         self.view = view
         self.model.sample_temp_changed.connect(self.view.update_sample_temp_display)
         self.model.chamber_temp_changed.connect(self.view.update_chamber_temp_display)
+        self.model.sample_power_changed.connect(self.view.update_sample_power_display)
+        self.model.chamber_power_changed.connect(self.view.update_chamber_power_display)
         self.model.error_occurred.connect(self.view.show_error)
         self.model.warning_occurred.connect(self.view.show_warning)
 
@@ -203,6 +309,73 @@ class AppController(QObject):
     def clear_all_temp_blocks(self):
         """命令View清除所有温度块并重置。"""
         self.view.clear_all_temp_blocks()
+
+    def save_temp_blocks(self):
+        """保存当前温度块配置到文件。"""
+        sequence_data = self.view.get_sequence_data()
+        if not sequence_data:
+            QMessageBox.warning(self.view, "保存失败", "当前没有可保存的温度块。")
+            return
+
+        default_dir = os.path.dirname(self.model.save_path) if getattr(self.model, "save_path", "") else os.getcwd()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.view,
+            "保存温度块配置",
+            os.path.join(default_dir, "temp_blocks.json"),
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(sequence_data, f, ensure_ascii=False, indent=2)
+            QMessageBox.information(self.view, "保存成功", f"温度块已保存到：\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self.view, "保存失败", f"无法保存温度块：{e}")
+
+    def load_temp_blocks(self):
+        """从文件加载温度块配置并更新UI。"""
+        default_dir = os.path.dirname(self.model.save_path) if getattr(self.model, "save_path", "") else os.getcwd()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.view,
+            "加载温度块配置",
+            default_dir,
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            QMessageBox.critical(self.view, "加载失败", f"读取文件失败：{e}")
+            return
+
+        if not isinstance(data, list):
+            QMessageBox.warning(self.view, "加载失败", "文件格式不正确，应为温度块列表。")
+            return
+
+        normalized = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            block = {
+                'start': str(item.get('start', '')).strip(),
+                'stop': str(item.get('stop', '')).strip(),
+                'step': str(item.get('step', '')).strip(),
+                'ramp': str(item.get('ramp', '')).strip(),
+                'end': bool(item.get('end', False))
+            }
+            if all(block.get(k, '') != '' for k in ['start', 'stop', 'step', 'ramp']):
+                normalized.append(block)
+
+        if not normalized:
+            QMessageBox.warning(self.view, "加载失败", "文件中没有有效的温度块。")
+            return
+
+        self.view.load_sequence_blocks(normalized)
 
     def _update_ui_lock_state(self):
         """计算并更新UI的锁定状态。"""
@@ -223,7 +396,6 @@ class AppController(QObject):
     def _start_measurement(self):
         """开始测量序列。"""
         sequence_data = self.view.get_sequence_data()
-        print(sequence_data)
         if not sequence_data:
             QMessageBox.warning(self.view, "Warning", "No valid temperature blocks to run.")
             self._update_ui_lock_state()
@@ -235,28 +407,65 @@ class AppController(QObject):
             self._update_ui_lock_state()
             return
 
-        # 只在文件不存在时写表头，存在就直接追加
+        # 读取运行模式（在写表头前确定），只在文件不存在时写表头
+        operation = 'Resistance'
+        try:
+            operation = self.view.get_mode()
+        except Exception:
+            pass
+
         if not os.path.exists(file_path):
-            self._write_header_to_file(file_path)
+            self._write_header_to_file(file_path, operation=operation)
 
         self.is_running = True
         self._update_ui_lock_state()
         self.view.update_running_status(True)
         self.view.clear_plots()
+        # 如果是 Sweep 模式，清空 Sweep 图以便每次序列从空白开始
+        try:
+            if operation == 'SweepIV' and hasattr(self.view, 'clear_sweep_plot'):
+                self.view.clear_sweep_plot()
+        except Exception:
+            pass
         self.view.update_plots_from_file(file_path)
         self.view.clear_error()
 
+        # 创建 MeasurementWorker，并根据 UI 选择的模式传入 operation 与 sweep 参数
         self.measurement_thread = QThread()
-        self.measurement_worker = MeasurementWorker(self.model, sequence_data)
-        self.measurement_worker.moveToThread(self.measurement_thread)
+        
+        sweep_params = None
+        if operation == 'SweepIV':
+            sweep_params = self.view.get_sweep_params() or {}
 
-        # --- 连接Worker的信号到Controller和View ---
+        self.measurement_worker = MeasurementWorker(self.model, sequence_data, operation=operation, sweep_params=sweep_params)
+        self.measurement_worker.moveToThread(self.measurement_thread)
         self.measurement_thread.started.connect(self.measurement_worker.run)
         self.measurement_worker.finished.connect(self.on_measurement_finished)
-        self.measurement_worker.new_data.connect(self.handle_new_data)
+
+        # 连接公有信号
         self.measurement_worker.progress.connect(self.view.update_progress)
         self.measurement_worker.update_set_temp.connect(self.view.update_set_temp_display)
         self.measurement_worker.block_changed.connect(self.on_block_changed)
+        self.measurement_worker.step_progress.connect(self.view.update_step_progress)
+        self.measurement_worker.total_steps.connect(self.view.set_total_steps)
+ 
+            # 连接模式相关信号（根据需要连接 new_resistance 或 new_sweep）
+        if operation == 'SweepIV':
+            try:
+                #self.measurement_worker.new_sweep.connect(self.handle_new_sweep)
+                self.measurement_worker.new_sweep_point.connect(self.handle_new_sweep_point)
+            except Exception:
+                pass
+        elif operation == 'Resistance':
+            try:
+                self.measurement_worker.new_resistance.connect(self.handle_new_resistance)
+            except Exception:
+                pass
+        else:
+            try:
+                self.measurement_worker.new_resistance.connect(self.handle_new_resistance)
+            except Exception:
+                pass
 
         self.measurement_thread.start()
 
@@ -289,23 +498,29 @@ class AppController(QObject):
         """处理当前执行块变化的信号。"""
         self.view.highlight_running_block(block_index)
 
-    def handle_new_data(self, temp, resistances):
+    def handle_new_resistance(self, temp, resistances):
         """
-        处理新数据：
-        1. 命令Model更新其内部状态。
-        2. 命令View更新UI。
-        3. 将数据写入文件。
+        处理新的电阻测量结果（Resistance 模式）。
+        1. 更新 Model 的最后电阻值。
+        2. 更新 View（图表）。
+        3. 将结果写入主数据文件。
         """
         for ch_name, res_value in resistances.items():
             if res_value is not None:
-                self.model.update_last_resistance(ch_name, res_value)
+                try:
+                    self.model.update_last_resistance(ch_name, res_value)
+                except Exception:
+                    pass
 
-        self.view.handle_new_data(temp, resistances)
-        self.view.update_plot_titles()
-        self._write_data_to_file(temp, resistances)
+        try:
+            self.view.handle_new_data(temp, resistances)
+            self.view.update_plot_titles() 
+        except Exception as e:
+            print(f"[Controller] handle_new_resistance error: {e}")
+        self._write_resistance_to_file(temp, resistances)
 
-    def _write_data_to_file(self, temp, resistances):
-        """将一行数据写入CSV文件。"""
+    def _write_resistance_to_file(self, temp, resistances):
+        """将一行电阻测量数据写入主 CSV 文件"""
         try:
             path = self.view.get_save_path()
             with open(path, 'a', newline='', encoding='utf-8') as f:
@@ -318,19 +533,91 @@ class AppController(QObject):
                     if res_value is not None and self.model.channels[ch].get('enabled', False):
                         row_data.append(f"{res_value:.6e}")
                     else:
-                        row_data.append('XXXXXXE0')
+                        row_data.append('0.000000E0')
 
                 row = [timestamp, f"{temp:.6e}"] + row_data
                 writer.writerow(row)
         except Exception as e:
-            QMessageBox.critical(self.view, "File Write Error", f"Error writing data to file:\n{e}")
+            try:
+                QMessageBox.critical(self.view, "File Write Error", f"Error writing data to file:\n{e}")
+            except Exception:
+                print(f"[Controller] Failed to write resistance data: {e}")
+    '''
+    def handle_new_sweep(self, temp, ch_name, currents, voltages):
+        """
+        处理一次 SweepIV 的测量结果：
+        1. 更新 View（绘图）。
+        2. 保存为单独的 sweep CSV。
+        3. 预留位置用于将来扩展（例如更新 model 的最近 sweep 状态）。
+        """
+        try:
+            self.view.handle_new_sweep(temp, ch_name, currents, voltages)
+        except Exception as e:
+            print(f"[Controller] handle_new_sweep error: {e}")
+        # 整条曲线的保存由逐点保存实现，避免在此处重复写入。
+
+    def _write_sweep_to_file(self, temp, ch_name, currents, voltages):
+        """保存单次 IV sweep 到单独的 CSV 文件。"""
+        try:
+            # Legacy method: keep for compatibility but do not duplicate header logic
+            path = self.view.get_save_path()
+
+            with open(path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                for cur, v in zip(currents, voltages):
+                    writer.writerow([timestamp, f"{temp:.6f}", f"{v:.6e}", f"{cur:.6e}"])
+
+            try:
+                self.view.update_progress(f"Appended sweep to: {os.path.basename(path)}")
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                QMessageBox.critical(self.view, "Save Sweep Error", f"Error writing sweep data to file:\n{e}")
+            except Exception:
+                print(f"[Controller] Failed to write sweep file: {e}")
+    '''
+    def handle_new_sweep_point(self, temp, ch_name, current, voltage):
+        """
+        处理单个 I-V 点：更新 GUI 并将点追加保存到对应的 sweep 文件中（按设定温度分文件）。
+        """
+        # 更新 GUI（若可用），单层异常处理
+        try:
+            self.view.handle_new_sweep_point(temp, ch_name, current, voltage)
+        except Exception as e:
+            print(f"[Controller] GUI update failed for sweep point: {e}")
+
+        try:
+            self._append_sweep_point(temp, ch_name, current, voltage)
+        except Exception as e:
+            print(f"[Controller] Failed to append sweep point: {e}")
+
+    def _append_sweep_point(self, temp, ch_name, current, voltage):
+        """将单个 I-V 点追加到以设定温度命名的 sweep CSV 文件中。"""
+        path = self.view.get_save_path() 
+        try:
+            with open(path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # 注意：保持与之前的列顺序一致 Voltage, Current
+                writer.writerow([timestamp, f"{float(temp):.6f}", f"{float(voltage):.6e}", f"{float(current):.6e}"])
+        except Exception as e:
+            try:
+                QMessageBox.warning(self.view, "Save Sweep Point", f"Failed to save sweep point: {e}")
+            except Exception:
+                print(f"[Controller] Failed to save sweep point and cannot show dialog: {e}")
+            return
+
+        try:
+            self.view.update_progress(f"Saved sweep point: {os.path.basename(path)}")
+        except Exception as e:
+            print(f"[Controller] Failed to update progress: {e}")
 
     def choose_path(self):
         """处理文件路径选择。"""
         current_path = self.view.get_save_path()
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.view, "Select Data Save File", current_path, "Text Files (*.txt);;All Files (*)"
-        )
+        file_path, _ = QFileDialog.getSaveFileName(self.view, "Select Data Save File", current_path, "Text Files (*.txt);;All Files (*)")
 
         if not file_path:
             return
@@ -339,15 +626,43 @@ class AppController(QObject):
         self.model.set_save_path(file_path)
         self.view.update_plots_from_file(file_path)
 
-    def _write_header_to_file(self, file_path):
-        """向指定文件写入表头。"""
+    def _write_header_to_file(self, file_path, operation: str = None):
+        """向指定文件写入表头。
+
+        Args:
+            file_path: 目标文件路径
+            operation: 可选，'Resistance' 或 'SweepIV'，若未提供则从 view 获取
+        """
+        if operation is None:
+            try:
+                operation = self.view.get_mode()
+            except Exception:
+                operation = 'Resistance'
+
         try:
-            header = self.model.get_csv_header()
+            if operation == 'Resistance':
+                header = ["Timestamp", "Temperature[K]"]
+                channel_names = sorted(self.model.channels.keys())
+                for ch_name in channel_names:
+                    header.append(f"Resistance_{ch_name}[Ohm]")
+
+            elif operation == 'SweepIV':
+                header = ['Timestamp', 'Temperature[K]', 'Voltage[V]', 'Current[A]']
+            else:
+                # 默认回退到 Resistance 表头
+                header = ["Timestamp", "Temperature[K]"]
+                channel_names = sorted(self.model.channels.keys())
+                for ch_name in channel_names:
+                    header.append(f"Resistance_{ch_name}[Ohm]")
+
             with open(file_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(header)
         except Exception as e:
-            QMessageBox.critical(self.view, "File Write Error", f"Error writing header to file:\n{e}")
+            try:
+                QMessageBox.critical(self.view, "File Write Error", f"Error writing header to file:\n{e}")
+            except Exception:
+                print(f"[Controller] Error writing header to file: {e}")
 
     def get_save_path(self):
         """为View提供获取初始保存路径的方法。"""
@@ -438,8 +753,8 @@ class AppController(QObject):
         try:
             kelvinion = getattr(model, 'kelvinion', None)
 
-            target_a = kelvinion.get_set_temperature()
-            target_b = kelvinion.get_set_temperature('B')
+            target_a = kelvinion.read_set_temperature()
+            target_b = kelvinion.read_set_temperature('B')
 
             view.update_progress(f"Applying sample ramp/PID for target {target_a:.2f} K...")
             kelvinion.set_sample_ramp(target_a)
