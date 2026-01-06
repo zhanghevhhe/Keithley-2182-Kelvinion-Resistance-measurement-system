@@ -3,46 +3,26 @@
         {
             "min": 0,
             "max": 3,
-<<<<<<< Updated upstream
             "P": 150,
             "I": 5
-=======
-            "P": 200,
-            "I": 18
->>>>>>> Stashed changes
         },
         {
             "min": 3,
             "max": 5,
-<<<<<<< Updated upstream
             "P": 180,
             "I": 8
-=======
-            "P": 200,
-            "I": 18
->>>>>>> Stashed changes
         },
         {
             "min": 5,
             "max": 11,
-<<<<<<< Updated upstream
             "P": 180,
             "I": 10
-=======
-            "P": 200,
-            "I": 18
->>>>>>> Stashed changes
         },
         {
             "min": 11,
             "max": 21,
-<<<<<<< Updated upstream
             "P": 180,
             "I": 12
-=======
-            "P": 200,
-            "I": 18
->>>>>>> Stashed changes
         },
         {
             "min": 21,
@@ -122,7 +102,6 @@
     "tolerance_ranges": [
         {
             "min": 0,
-<<<<<<< Updated upstream
             "max": 51,
             "tolerance": 0.05
         },
@@ -133,18 +112,6 @@
         },
         {
             "min": 301,
-=======
-            "max": 21,
-            "tolerance": 0.03
-        },
-        {
-            "min": 51,
-            "max": 201,
-            "tolerance": 0.08
-        },
-        {
-            "min": 201,
->>>>>>> Stashed changes
             "max": 1000,
             "tolerance": 0.1
         }
