@@ -7,18 +7,18 @@ import time
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QLineEdit, QFileDialog, QFrame, QScrollArea, QSplitter,
-    QMessageBox, QDialog, QCheckBox, QGridLayout, QGroupBox, QToolButton, QSizePolicy
+    QMessageBox, QDialog, QCheckBox, QGridLayout, QGroupBox, QToolButton, QSizePolicy, QComboBox, QStyle, QProgressBar
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import QSize
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 import pyqtgraph as pg
 from measure_core import MeasurementSystem
 from controller import AppController
 import numpy as np
 
 # 导入其他模块模块
-from ui_utils import get_labview_style, create_run_icon, create_stop_icon, create_labview_folder_icon
+from ui_utils import get_labview_style, create_run_icon, create_stop_icon
 from widgets.temp_block_widget import TempBlockWidget
 from dialogs.set_temp_dialog import SetTempDialog
 from dialogs.channel_config_dialog import ChannelConfigDialog
@@ -40,6 +40,8 @@ class MainWindow(QMainWindow):
     - 数据保存路径设置
     - 实时数据图表显示
     - 手动温度设置
+    - 通道配置
+    - PID配置管理
     """
     def __init__(self, controller):
         super().__init__()
@@ -76,6 +78,7 @@ class MainWindow(QMainWindow):
         self.lockable_widgets = [
             self.path_edit, self.path_btn,
             self.temp_blocks_container, self.add_block_btn, self.clear_all_btn,
+            self.save_blocks_btn, self.load_blocks_btn,
             self.set_temp_edit, self.channel_btn,
         ]
         self.setStyleSheet(get_labview_style())
@@ -100,6 +103,8 @@ class MainWindow(QMainWindow):
         
         self.add_block_btn.clicked.connect(self.controller.add_temp_block)
         self.clear_all_btn.clicked.connect(self.controller.clear_all_temp_blocks)
+        self.save_blocks_btn.clicked.connect(self.controller.save_temp_blocks)
+        self.load_blocks_btn.clicked.connect(self.controller.load_temp_blocks)
 
         self.channel_btn.clicked.connect(self.controller.open_channel_config)
 
@@ -181,6 +186,7 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(self._create_sequence_panel(), 1) # 占据所有剩余空间
 
+
         # --- 下部 (固定在底部) ---
         bottom_widget = QWidget()
         bottom_layout = QVBoxLayout(bottom_widget)
@@ -188,32 +194,86 @@ class MainWindow(QMainWindow):
         bottom_layout.setSpacing(10)
         
         # --- 温度显示区域 ---
+        # 使用 GridLayout 确保标签和输入框对齐
+        temp_grid = QGridLayout()
+        temp_grid.setContentsMargins(0, 0, 0, 0)
+        temp_grid.setSpacing(8)
+        temp_grid.setColumnStretch(1, 0)  # 输入框列不拉伸
+        temp_grid.setColumnStretch(2, 0)  # 功率显示列不拉伸
+        temp_grid.setColumnStretch(3, 1)   # 右侧空白列拉伸
+        
         # 样品温度显示（F通道）- 显示样品实际温度
-        sample_temp_row = QHBoxLayout()
-        sample_temp_row.setContentsMargins(0,0,0,0); sample_temp_row.setSpacing(8)
-        sample_temp_row.addWidget(QLabel("Sample Temp[K]:"))
-        self.sample_temp_edit = QLineEdit("--"); self.sample_temp_edit.setReadOnly(True); self.sample_temp_edit.setFixedWidth(70)
-        sample_temp_row.addWidget(self.sample_temp_edit)
-        sample_temp_row.addStretch()
-        bottom_layout.addLayout(sample_temp_row)
+        sample_temp_label = QLabel("Sample [K]:")
+        self.sample_temp_edit = QLineEdit("--")
+        self.sample_temp_edit.setReadOnly(True)
+        self.sample_temp_edit.setFixedWidth(70)
+        temp_grid.addWidget(sample_temp_label, 0, 0)
+        temp_grid.addWidget(self.sample_temp_edit, 0, 1)
+        
+        # 样品功率显示
+        sample_power_label = QLabel("OUTPUT:")
+        self.sample_power_bar = QProgressBar()
+        self.sample_power_bar.setObjectName("heaterbar")
+        self.sample_power_bar.setMinimum(0)
+        self.sample_power_bar.setMaximum(100)
+        self.sample_power_bar.setValue(0)
+        self.sample_power_bar.setFixedWidth(40)
+        self.sample_power_bar.setFixedHeight(10)  # 设置固定高度
+        self.sample_power_bar.setTextVisible(False)  # 不显示文本，使用旁边的标签
+
+        self.sample_power_value = QLabel("--")
+        self.sample_power_value.setFixedWidth(40)
+        self.sample_power_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        sample_power_row = QHBoxLayout()
+        sample_power_row.setContentsMargins(0, 0, 0, 0)
+        sample_power_row.setSpacing(4)
+        # sample_power_row.addWidget(sample_power_label)
+        sample_power_row.addWidget(self.sample_power_bar)
+        sample_power_row.addWidget(self.sample_power_value)
+        sample_power_widget = QWidget()
+        sample_power_widget.setLayout(sample_power_row)
+        temp_grid.addWidget(sample_power_widget, 0, 2)
         
         # 样品腔温度显示（D通道）- 显示样品腔环境温度
-        chamber_temp_row = QHBoxLayout()
-        chamber_temp_row.setContentsMargins(0,0,0,0); chamber_temp_row.setSpacing(8)
-        chamber_temp_row.addWidget(QLabel("Chamber Temp[K]:"))
-        self.chamber_temp_edit = QLineEdit("--"); self.chamber_temp_edit.setReadOnly(True); self.chamber_temp_edit.setFixedWidth(70)
-        chamber_temp_row.addWidget(self.chamber_temp_edit)
-        chamber_temp_row.addStretch()
-        bottom_layout.addLayout(chamber_temp_row)
+        chamber_temp_label = QLabel("Chamber [K]:")
+        self.chamber_temp_edit = QLineEdit("--")
+        self.chamber_temp_edit.setReadOnly(True)
+        self.chamber_temp_edit.setFixedWidth(70)
+        temp_grid.addWidget(chamber_temp_label, 1, 0)
+        temp_grid.addWidget(self.chamber_temp_edit, 1, 1)
+        
+        # 腔体功率显示
+        chamber_power_label = QLabel("OUTPUT:")
+        self.chamber_power_bar = QProgressBar()
+        self.chamber_power_bar.setObjectName("heaterbar")
+        self.chamber_power_bar.setMinimum(0)
+        self.chamber_power_bar.setMaximum(100)
+        self.chamber_power_bar.setValue(0)
+        self.chamber_power_bar.setFixedWidth(40)
+        self.chamber_power_bar.setFixedHeight(10)  # 设置固定高度
+        self.chamber_power_bar.setTextVisible(False)  # 不显示文本，使用旁边的标签
+
+        self.chamber_power_value = QLabel("--")
+        self.chamber_power_value.setFixedWidth(40)
+        self.chamber_power_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        chamber_power_row = QHBoxLayout()
+        chamber_power_row.setContentsMargins(0, 0, 0, 0)
+        chamber_power_row.setSpacing(4)
+        # chamber_power_row.addWidget(chamber_power_label)
+        chamber_power_row.addWidget(self.chamber_power_bar)
+        chamber_power_row.addWidget(self.chamber_power_value)
+        chamber_power_widget = QWidget()
+        chamber_power_widget.setLayout(chamber_power_row)
+        temp_grid.addWidget(chamber_power_widget, 1, 2)
         
         # 设置温度输入框 - 用于手动设置目标温度
-        set_temp_row = QHBoxLayout()
-        set_temp_row.setContentsMargins(0,0,0,0); set_temp_row.setSpacing(8)
-        set_temp_row.addWidget(QLabel("Set Temp[K]:"))
-        self.set_temp_edit = QLineEdit("--"); self.set_temp_edit.setFixedWidth(70)
-        set_temp_row.addWidget(self.set_temp_edit)
-        set_temp_row.addStretch()
-        bottom_layout.addLayout(set_temp_row)
+        set_temp_label = QLabel("Set Temp[K]:")
+        self.set_temp_edit = QLineEdit("--")
+        self.set_temp_edit.setFixedWidth(70)
+        temp_grid.addWidget(set_temp_label, 2, 0)
+        temp_grid.addWidget(self.set_temp_edit, 2, 1)
+        
+        bottom_layout.addLayout(temp_grid)
         
         # Channel Settings 放在单独一行，占满宽度
         self.channel_btn = QPushButton("Channel Settings")
@@ -237,11 +297,10 @@ class MainWindow(QMainWindow):
         pid_btn_row.addWidget(self.apply_pid_btn)
         bottom_layout.addLayout(pid_btn_row)
 
-
-        
         layout.addWidget(bottom_widget)
         
         return container
+
 
     def _create_status_panel(self):
         """
@@ -253,6 +312,7 @@ class MainWindow(QMainWindow):
         """
         status_group = QGroupBox("System Status")
         status_layout = QHBoxLayout(status_group)
+        
         # 系统就绪状态指示灯
         self.status_lamp = QCheckBox(); self.status_lamp.setChecked(True); self.status_lamp.setEnabled(False)
         self.status_lamp.setStyleSheet("""
@@ -296,7 +356,7 @@ class MainWindow(QMainWindow):
         path_group = QGroupBox("Data Path")
         path_layout = QHBoxLayout(path_group)
         self.path_edit = QLineEdit(self.controller.get_save_path())
-        self.path_btn = QPushButton(); self.path_btn.setIcon(create_labview_folder_icon())
+        self.path_btn = QPushButton(); self.path_btn.setIcon(self.style().standardIcon(QStyle.SP_DirOpenIcon))
         path_layout.addWidget(QLabel("Save Path:")); path_layout.addWidget(self.path_edit); path_layout.addWidget(self.path_btn)
         return path_group
 
@@ -315,10 +375,32 @@ class MainWindow(QMainWindow):
         self.add_block_btn = QPushButton("Add Block")
         self.clear_all_btn = QPushButton("Clear All")
         self.clear_all_btn.setObjectName("clearAllButton")
+        self.save_blocks_btn = QPushButton()
+        self.save_blocks_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
+        self.save_blocks_btn.setToolTip("保存当前温度块配置为 JSON")
+        self.save_blocks_btn.setFixedWidth(36)
+        self.load_blocks_btn = QPushButton()
+        self.load_blocks_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+        self.load_blocks_btn.setToolTip("从 JSON 文件加载温度块配置")
+        self.load_blocks_btn.setFixedWidth(36)
+
+        self.progressbar_steps = QProgressBar()
+        self.progressbar_steps.setValue(0)
+        self.progressbar_steps.setTextVisible(False)
+        self.progressbar_steps.setFixedHeight(20)
+        self.progressbar_steps.setFormat("Progress: %v/%m")
+        self.progressbar_steps.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
         btns_layout = QHBoxLayout()
-        btns_layout.addWidget(self.add_block_btn); btns_layout.addWidget(self.clear_all_btn); btns_layout.addStretch()
+        btns_layout.addWidget(self.add_block_btn)
+        btns_layout.addWidget(self.clear_all_btn)
+        btns_layout.addWidget(self.save_blocks_btn)
+        btns_layout.addWidget(self.load_blocks_btn)
+        btns_layout.addStretch()
         temp_layout.addWidget(self.scroll_area)
+        temp_layout.addWidget(self.progressbar_steps)
         temp_layout.addLayout(btns_layout)
+        
         self.temp_blocks_layout.addStretch()  # 只添加一个stretch
         return temp_group
 
@@ -338,9 +420,17 @@ class MainWindow(QMainWindow):
         container = QWidget()
         layout = QVBoxLayout(container)
         
+        # 使用 Tab 控件在右侧切换不同功能页（Resistance / SweepIV）
+        from PyQt5.QtWidgets import QTabWidget
+
+        self.tab_widget = QTabWidget()
+
+        # --- Resistance Tab （原有四图布局） ---
+        res_tab = QWidget()
+        res_layout = QVBoxLayout(res_tab)
         self.plot_grid = pg.GraphicsLayoutWidget()
         self.plot_grid.setBackground('#fcfcfc')
-        layout.addWidget(self.plot_grid)
+        res_layout.addWidget(self.plot_grid)
         self.plot_items = {}
         ch_names = list(self.controller.model.channels.keys())
         plot_positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
@@ -349,7 +439,6 @@ class MainWindow(QMainWindow):
             color = self.controller.model.channels[ch].get('color', '#808080')
             plot = self.plot_grid.addPlot(row=pos[0], col=pos[1])
             plot.setMenuEnabled(True)
-            # 极简扁平风网格
             plot.showGrid(x=True, y=True, alpha=0.7)
             plot.showAxis('top'); plot.showAxis('right')
             plot.getAxis('top').setStyle(showValues=False)
@@ -363,10 +452,59 @@ class MainWindow(QMainWindow):
             plot.getViewBox().setBackgroundColor('#fcfcfc')
             plot.getViewBox().setBorder(None)
             plot.getViewBox().setMouseMode(pg.ViewBox.RectMode)
-            # 标题/标签
             plot.setLabel('bottom', '<span style="color:#222; font-family: Segoe UI; font-size: 11pt; font-weight:600;">Temp [K]</span>')
             self.plot_items[ch] = plot
         self.update_plot_titles()
+
+        # --- SweepIV Tab ---
+        sweep_tab = QWidget()
+        sweep_layout = QVBoxLayout(sweep_tab)
+        sweep_layout.setContentsMargins(20, 20, 20, 20)
+        sweep_layout.setSpacing(10)
+        # Sweep plot (横轴为 Voltage, 纵轴为 Current)
+        self.sweep_plot = pg.PlotWidget()
+        self.sweep_plot.setBackground('#fcfcfc')
+        self.sweep_plot.showGrid(x=True, y=True)
+        self.sweep_plot.setLabel('bottom', 'Voltage [V]')
+        self.sweep_plot.setLabel('left', 'Current [A]')
+        self.sweep_plot.setMinimumHeight(280)
+        sweep_layout.addWidget(self.sweep_plot, 1)
+
+        # --- Sweep 参数（直接展示，无边框容器，位于图下方） ---
+        sweep_params_widget = QWidget()
+        sweep_params_layout = QHBoxLayout(sweep_params_widget)
+        sweep_params_layout.setContentsMargins(0, 0, 0, 0)
+        sweep_params_layout.setSpacing(8)
+        sweep_params_layout.addWidget(QLabel('Start I [A]:'))
+        self.sweep_start_edit = QLineEdit('1e-6'); self.sweep_start_edit.setFixedWidth(90)
+        sweep_params_layout.addWidget(self.sweep_start_edit)
+        sweep_params_layout.addWidget(QLabel('Stop I [A]:'))
+        self.sweep_stop_edit = QLineEdit('1e-3'); self.sweep_stop_edit.setFixedWidth(90)
+        sweep_params_layout.addWidget(self.sweep_stop_edit)
+        sweep_params_layout.addWidget(QLabel('Step I [A]:'))
+        self.sweep_step_edit = QLineEdit('1e-6'); self.sweep_step_edit.setFixedWidth(90)
+        sweep_params_layout.addWidget(self.sweep_step_edit)
+        sweep_params_layout.addWidget(QLabel('Channel:'))
+        self.sweep_channel_combo = QComboBox()
+        self.sweep_channel_combo.addItems(['CH1', 'CH2', 'CH3', 'CH4'])
+        self.sweep_channel_combo.setCurrentIndex(0)
+        self.sweep_channel_combo.setFixedWidth(90)
+        self.sweep_channel_combo.setStyleSheet('QComboBox { background-color: white; }')
+        
+        sweep_params_layout.addWidget(self.sweep_channel_combo)
+        sweep_params_layout.addStretch()
+        sweep_layout.addWidget(sweep_params_widget)
+
+        self.tab_widget.addTab(res_tab, 'Resistance')
+        self.tab_widget.addTab(sweep_tab, 'SweepIV')
+
+        # Sweep 绘图状态：图例、颜色映射、已绘制曲线引用
+        self.sweep_legend = None
+        self.sweep_color_map = {}
+        self.sweep_color_index = 0
+        self.sweep_traces = {}
+
+        layout.addWidget(self.tab_widget)
         return container
 
     def update_sample_temp_display(self, temp):
@@ -386,9 +524,54 @@ class MainWindow(QMainWindow):
             temp (float): 样品腔温度值，单位为K
         """
         self.chamber_temp_edit.setText(f"{temp:.3f}")
+    
+    def update_sample_power_display(self, power):
+        """
+        更新样品功率显示。
+        
+        Args:
+            power (float): 样品功率值，0~100的百分比
+        """
+        try:
+            power_val = float(power)  # 确保转换为浮点数
+            power_val = max(0.0, min(100.0, power_val))  # 限制在0~100范围
+            bar_value = int(round(power_val))  # 四舍五入到整数
+            self.sample_power_bar.setValue(bar_value)
+            self.sample_power_bar.update()  # 强制更新进度条显示
+            self.sample_power_value.setText(f"{power_val:.1f}%")
+        except (ValueError, TypeError) as e:
+            print(f"[Power] Error updating sample power: {e}, power={power}")
+            self.sample_power_bar.setValue(0)
+            self.sample_power_value.setText("--")
+    
+    def update_chamber_power_display(self, power):
+        """
+        更新腔体功率显示。
+        
+        Args:
+            power (float): 腔体功率值，0~100的百分比
+        """
+        try:
+            power_val = float(power)  # 确保转换为浮点数
+            power_val = max(0.0, min(100.0, power_val))  # 限制在0~100范围
+            bar_value = int(round(power_val))  # 四舍五入到整数
+            self.chamber_power_bar.setValue(bar_value)
+            self.chamber_power_bar.update()  # 强制更新进度条显示
+            self.chamber_power_value.setText(f"{power_val:.1f}%")
+        except (ValueError, TypeError) as e:
+            print(f"[Power] Error updating chamber power: {e}, power={power}")
+            self.chamber_power_bar.setValue(0)
+            self.chamber_power_value.setText("--")
 
     def update_progress(self, message):
         self.status_display.setText(message)
+
+    def set_total_steps(self, total_steps):
+        self.progressbar_steps.setMaximum(total_steps)
+        self.progressbar_steps.setTextVisible(True)
+
+    def update_step_progress(self, current_step):
+        self.progressbar_steps.setValue(current_step)
     
     def show_error(self, error_message):
         """
@@ -422,6 +605,134 @@ class MainWindow(QMainWindow):
     def update_set_temp_display(self, temp):
         self.set_temp_edit.setText(f"{temp:.3f}")
 
+    def get_mode(self):
+        """返回当前右侧选中的模式：'Resistance' 或 'SweepIV'"""
+        idx = self.tab_widget.currentIndex()
+        if idx == 0:
+            return 'Resistance'
+        elif idx == 1:
+            return 'SweepIV'
+        
+        return 'Resistance'
+
+    def get_sweep_params(self):
+        """从 SweepIV 选项卡读取起始/结束/步长电流参数，返回 dict。"""
+        try:
+            start = float(self.sweep_start_edit.text())
+            stop = float(self.sweep_stop_edit.text())
+            step = float(self.sweep_step_edit.text())
+        except Exception:
+            return None
+        # 读取所选通道
+        try:
+            channel = str(self.sweep_channel_combo.currentText())
+        except Exception:
+            channel = 'CH1'
+        return {'start': start, 'stop': stop, 'step': step, 'channel': channel}
+
+    def handle_new_sweep(self, temp, ch_name, currents, voltages):
+        """在 SweepIV 选项卡上绘制新的一次 IV 扫描结果。
+        Args:
+            temp (float): 当前温度
+            ch_name (str): 通道名
+            currents (list[float]): 电流序列
+            voltages (list[float]): 对应电压序列
+        """
+        try:
+            # 使用显示温度作为图例标签
+            label = f"{temp:.3f} K"
+
+            # 颜色分配：相同温度使用相同颜色，按插入顺序分配新颜色
+            if label in self.sweep_color_map:
+                color = self.sweep_color_map[label]
+            else:
+                # 生成一个可辨识的颜色
+                color = pg.intColor(self.sweep_color_index, hues=12, values=255)
+                self.sweep_color_map[label] = color
+                self.sweep_color_index += 1
+
+            pen = pg.mkPen(color=color, width=2)
+
+            # 创建图例（只创建一次）
+            try:
+                if self.sweep_legend is None:
+                    self.sweep_legend = self.sweep_plot.addLegend(offset=(10, 10))
+            except Exception:
+                # 如果图例创建失败，也不要影响绘图
+                self.sweep_legend = None
+
+            # 绘制：x=Voltage, y=Current。使用 name 参数让图例自动关联曲线
+            pdi = self.sweep_plot.plot(voltages, currents, pen=pen, symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
+            # 保存曲线引用以便未来扩展（例如更新单条曲线）
+            self.sweep_traces[label] = pdi
+
+            # 标题显示通道信息，图例记录温度信息
+            self.sweep_plot.setTitle(f"IV Sweep - {ch_name}")
+        except Exception as e:
+            print(f"[GUI] handle_new_sweep error: {e}")
+
+    def handle_new_sweep_point(self, temp, ch_name, current, voltage):
+        """Incrementally add a single I-V point to the SweepIV plot.
+
+        This is called for each measured I-V point to support realtime plotting
+        and incremental saving performed by the controller.
+        """
+        try:
+            label = f"{float(temp):.3f} K"
+
+            # color assignment (reuse same temp label)
+            if label in self.sweep_color_map:
+                color = self.sweep_color_map[label]
+            else:
+                color = pg.intColor(self.sweep_color_index, hues=12, values=255)
+                self.sweep_color_map[label] = color
+                self.sweep_color_index += 1
+
+            pen = pg.mkPen(color=color, width=2)
+
+            # Ensure legend exists
+            try:
+                if self.sweep_legend is None:
+                    self.sweep_legend = self.sweep_plot.addLegend(offset=(10, 10))
+            except Exception:
+                self.sweep_legend = None
+
+            # Append to existing trace or create a new one
+            try:
+                if label in self.sweep_traces:
+                    pdi = self.sweep_traces[label]
+                    try:
+                        x = list(pdi.xData) if hasattr(pdi, 'xData') else []
+                        y = list(pdi.yData) if hasattr(pdi, 'yData') else []
+                    except Exception:
+                        x, y = [], []
+                    x.append(float(voltage)); y.append(float(current))
+                    pdi.setData(x, y, pen=pen, symbol='o', symbolSize=6, symbolBrush=color)
+                else:
+                    pdi = self.sweep_plot.plot([float(voltage)], [float(current)], pen=pen, symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
+                    self.sweep_traces[label] = pdi
+            except Exception:
+                # As a fallback, clear and replot the single point
+                try:
+                    self.sweep_plot.plot([float(voltage)], [float(current)], pen=pen, symbol='o', symbolSize=6, symbolBrush=color, name=label, clear=False)
+                except Exception:
+                    pass
+
+            self.sweep_plot.setTitle(f"IV Sweep - {ch_name}")
+        except Exception as e:
+            print(f"[GUI] handle_new_sweep_point error: {e}")
+
+    def clear_sweep_plot(self):
+        """Clear sweep plot and reset sweep-related state."""
+        try:
+            self.sweep_plot.clear()
+            self.sweep_traces.clear()
+            self.sweep_color_map.clear()
+            self.sweep_color_index = 0
+            self.sweep_legend = None
+        except Exception as e:
+            print(f"[GUI] clear_sweep_plot error: {e}")
+
     def update_running_status(self, is_running):
         self.run_status_lamp.setChecked(is_running)
 
@@ -441,6 +752,17 @@ class MainWindow(QMainWindow):
         # 界面静态组件
         for widget in self.lockable_widgets:
             widget.setEnabled(not is_running)
+        # 禁用选项卡切换（仅禁用 tabBar，不会触发自动切换当前索引）
+        try:
+            if hasattr(self, 'tab_widget') and self.tab_widget is not None:
+                try:
+                    self.tab_widget.tabBar().setEnabled(not is_running)
+                except Exception:
+                    # 回退：如果 tabBar 不可用，则保持原有行为不做任何处理
+                    pass
+        except Exception:
+            pass
+
         # 温度块内的控件
         for block in getattr(self, 'temp_blocks', []):
             # 输入文本框
@@ -486,8 +808,10 @@ class MainWindow(QMainWindow):
                 if not header or len(header) < 3:
                     return
                 temp_idx = 1
-                ch_indices = {}
+                ch_indices = {'CH1':2, 'CH2':3, 'CH3':4, 'CH4':5}
                 for i, h in enumerate(header):
+                    if h == 'Temperature[K]':
+                        temp_idx = i
                     if h.startswith('Resistance_'):
                         ch_name = h.split('_')[1].split('[')[0]
                         ch_indices[ch_name] = i
@@ -499,7 +823,7 @@ class MainWindow(QMainWindow):
                         temp = float(row[temp_idx])
                         for ch, idx in ch_indices.items():
                             val = row[idx]
-                            if 'X' in val or val.strip() == '':
+                            if val == '0.000000E0' or val.strip() == '':
                                 continue
                             y = float(val)
                             data_by_ch[ch]['x'].append(temp)
@@ -592,6 +916,7 @@ class MainWindow(QMainWindow):
             layout.insertWidget(layout.count()-1, line)
         layout.addStretch()  # 重新添加stretch
         self.set_ui_locked(self.run_stop_btn.isChecked())
+        return block
 
     def clear_all_temp_blocks(self):
         # 移除所有widget和stretch
@@ -608,6 +933,37 @@ class MainWindow(QMainWindow):
             layout.addStretch()
         self.set_ui_locked(self.run_stop_btn.isChecked())
 
+    def load_sequence_blocks(self, sequence_data):
+        """
+        根据给定的温度块数据重建序列区域。
+        Args:
+            sequence_data (list[dict]): 包含 start/stop/step/ramp/end 的字典列表
+        """
+        layout = self.temp_blocks_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.temp_blocks.clear()
+
+        if not sequence_data:
+            self.add_temp_block()
+        else:
+            for data in sequence_data:
+                block = self.add_temp_block()
+                if not block:
+                    continue
+                block.start.setText(str(data.get('start', '')).strip())
+                block.stop.setText(str(data.get('stop', '')).strip())
+                block.step.setText(str(data.get('step', '')).strip())
+                block.ramp.setText(str(data.get('ramp', '')).strip())
+                block.end_checkbox.setChecked(bool(data.get('end', False)))
+                block.check_edited()
+        # 保证末尾有一个 stretch
+        if layout.count() == 0 or not isinstance(layout.itemAt(layout.count()-1).widget(), type(None)):
+            layout.addStretch()
+        self.set_ui_locked(self.run_stop_btn.isChecked())
+
     def get_sequence_data(self):
         sequence_data = []
         for block_widget in self.temp_blocks:
@@ -619,6 +975,7 @@ class MainWindow(QMainWindow):
                     'end': block_widget.end_checkbox.isChecked()
                 })
         return sequence_data
+
 
     def get_save_path(self):
         return self.path_edit.text()
@@ -647,13 +1004,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "输入错误", "请输入有效的温度数值！")
                 return
 
-            # 更新 UI 显示 set temp 文本框（保留两位小数）
-            self.set_temp_edit.setText(f"{temp:.2f}")
+            # 更新 UI 显示 set temp 文本框（保留三位小数）
+            self.set_temp_edit.setText(f"{temp:.3f}")
 
             # 委托 controller 处理（controller 将负责同时写 A 和 B）
             try:
                 if hasattr(self, "controller") and hasattr(self.controller, "set_manual_temperature"):
-                    self.controller.set_manual_temperature(temp, ramp=ramp)
+                    self.controller.set_manual_temperature(temp, ramp)
                 else:
                     QMessageBox.warning(self, "未实现", "控制器未实现 set_manual_temperature 接口。")
             except Exception as e:

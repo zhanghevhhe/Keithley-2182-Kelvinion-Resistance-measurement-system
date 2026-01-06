@@ -145,4 +145,4 @@ class TempBlockWidget(QFrame):
         lineedit_style = "QLineEdit { background-color: #fff; border: 1px solid #a0a0a0; border-radius: 0; padding: 3px; }"
         frame_style = f"QFrame {{ background-color: {frame_color}; }}"
             
-        self.setStyleSheet(frame_style + " " + lineedit_style) 
+        self.setStyleSheet(frame_style + " " + lineedit_style)
