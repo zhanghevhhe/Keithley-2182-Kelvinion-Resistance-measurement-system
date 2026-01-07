@@ -5,6 +5,7 @@ import time
 import pyvisa
 from pyvisa.constants import StopBits
 from PyQt5.QtCore import QObject, pyqtSignal, QTimer
+from abc import ABC, abstractmethod
 
 # --- 严格遵循 main.py 的真实仪器控制类 ---
 
@@ -18,6 +19,191 @@ def interruptible_sleep(total_sec, is_running_checker=None, interval=0.2):
         elapsed += interval
     return True
 
+
+
+
+
+class TempController(ABC):
+    def __init__(self, resource, pidramp_config):
+        self.inst = resource
+        self.pidramp = pidramp_config
+        self._lock = threading.Lock()
+        self.temperatures = (0.0, 0.0)
+        self.powers = (0.0, 0.0)
+
+    # --- 必须由子类实现的底层指令 (抽象方法) ---
+    @abstractmethod
+    def _send_setp(self, loop: str, target: float): pass
+
+    @abstractmethod
+    def _send_ramp(self, loop: str, ramp_val: float): pass
+
+    @abstractmethod
+    def _send_pid(self, loop: str, p: float, i: float, d: float): pass
+
+    @abstractmethod
+    def _send_range(self, loop: str, range_val: str): pass
+
+    @abstractmethod
+    def _query_set_temp(self, channel: str) -> float: pass
+
+    @abstractmethod
+    def _query_temp(self, channel: str) -> float: pass
+
+    @abstractmethod
+    def _query_power(self, loop: str) -> float: pass
+
+    # --- 通用逻辑：所有仪器通用的算法，直接复用 ---
+    def read_set_temperature(self, channel: str = 'A') -> float:
+        """通用读取设定温度逻辑"""
+        return self._query_set_temp(channel)
+
+    def set_ramp(self, target: float, loop: str = 'A', ramp_override: float = None):
+        """通用 Ramp 设置逻辑"""
+        ramp = ramp_override if ramp_override is not None else 1.0
+        config_key = "sample_ramp" if loop == 'A' else "chamber_ramp"
+        if ramp_override is None:
+            for entry in self.pidramp[config_key]:
+                if entry["min"] <= target < entry["max"]:
+                    ramp = entry["ramp"]
+                    break
+        self._send_ramp(loop, ramp)
+    
+    def set_pid(self, target: float, loop: str = 'A'):
+        """通用 PID 设置逻辑"""
+        config_key = "sample_pid" if loop == 'A' else "chamber_pid"
+        for entry in self.pidramp[config_key]:
+            if entry["min"] <= target < entry["max"]:
+                self._send_pid(loop, entry['P'], entry['I'], 0) # 假设D为0
+                break
+    
+    def set_range(self, target: float, loop: str = 'A'):
+        """通用 Range 设置逻辑"""
+        config_key = "sample_range" if loop == 'A' else "chamber_range"
+        for entry in self.pidramp[config_key]:
+            if entry["min"] <= target < entry["max"]:
+                self._send_range(loop, entry['range'])
+                break
+
+    def set_temperature(self, target: float, loop: str = 'A', ramp_override: float = None):
+        """通用设温逻辑：自动查找并设置 PID、Ramp、Range"""
+        self._send_setp(loop, target)
+        
+        self.set_ramp(target, loop, ramp_override)
+
+        self.set_pid(target, loop)
+
+        self.set_range(target, loop)
+        
+        print(f"[{self.__class__.__name__}] Loop {loop} configured for {target} K")
+
+    def _tolerance(self, target: float) -> float:
+        for entry in self.pidramp["tolerance_ranges"]:
+            if entry["min"] <= target < entry["max"]:
+                return entry["tolerance"]
+        return 0.1
+    #--------------------------------------------------
+    # 其他功能语句
+
+    def wait_for_stable(self, target: float, loop: str = 'A', is_running_checker=None):
+        tol = self._tolerance(target)
+        print(f"[Kelvinion] Waiting for temperature to reach {target:.2f} K (±{tol} K)...")
+        while True:
+            if is_running_checker and not is_running_checker():
+                print("[Kelvinion] wait_for_stable aborted by user.")
+                return
+            interruptible_sleep(0.8)
+            # 从属性获取温度，避免交叉读写
+            t = self.get_sample_temperature() if loop == 'A' else self.get_chamber_temperature()
+            if t - target < tol and target - t < tol:
+                print("[Kelvinion] Temperature entered tolerance range...")
+                break
+            if not interruptible_sleep(1, is_running_checker):
+                print("[Kelvinion] wait_for_stable aborted by user (sleep phase).")
+                return
+        
+        valid_count = 0
+        while valid_count < 6:
+            if is_running_checker and not is_running_checker():
+                print("[Kelvinion] wait_for_stable aborted by user.")
+                return
+            interruptible_sleep(0.8)
+            t = self.get_sample_temperature() if loop == 'A' else self.get_chamber_temperature()
+            print(f"[Kelvinion] Stability Check {valid_count+1}/6: {t:.3f} K")
+            if t - target < tol and target - t < tol:
+                valid_count += 1
+            else:
+                valid_count = 0
+            if not interruptible_sleep(1, is_running_checker):
+                print("[Kelvinion] wait_for_stable aborted by user (sleep phase).")
+                return
+        print(f"[Kelvinion] Temperature stabilized for {loop}.")
+
+    def get_sample_power(self): return self.powers[0]
+    def get_chamber_power(self): return self.powers[1]
+    def get_sample_temperature(self): return self.temperatures[0]
+    def get_chamber_temperature(self): return self.temperatures[1]
+
+class KelvinionController(TempController):
+    def __init__(self, resource, pidramp_config):
+        super().__init__(resource, pidramp_config)
+        # 串口基础设置
+        self.inst.baud_rate = 115200
+        self.inst.data_bits = 8
+        # ... 其他初始化 ...
+
+    def _safe_query(self, cmd: str):
+        with self._lock:
+            return self.inst.query(cmd)
+
+    def _safe_write(self, cmd: str):
+        with self._lock:
+            self.inst.write(cmd)
+
+    # --- 实现父类要求的底层指令 ---
+    def _send_setp(self, loop: str, target: float):
+        self._safe_write(f"[SET:SETP:{loop}:{target}K]")
+
+    def _send_ramp(self, loop: str, ramp_val: float):
+        self._safe_write(f"[SET:RAMP:{loop}:{ramp_val}]")
+
+    def _send_pid(self, loop: str, p: float, i: float, d: float):
+        # 针对 Kelvinion 需要分两次写入的特性
+        with self._lock:
+            self.inst.write(f"[SET:PID:{loop}:KP:{p}]")
+            time.sleep(0.1)
+            self.inst.write(f"[SET:PID:{loop}:KI:{i}]")
+
+    def _send_range(self, loop: str, range_val: str):
+        self._safe_write(f"[SET:RANGE:{loop}:{range_val}]")
+
+    def _query_temp(self, channel: str) -> float:
+        raw = self._safe_query(f"[READ:K:{channel}]")
+        return float(raw[1:-3]) # 剥离 [ 和 ]K
+
+    def _query_power(self, loop: str) -> float:
+        raw = self._safe_query(f"[READ:POWER:{loop}]")
+        return float(raw[1:-3])
+
+    def _query_set_temp(self, channel: str) -> float:
+        raw = self._safe_query(f"[READ:SETP:{channel}]")
+        return float(raw[1:-3])
+
+    def read_temperatures(self):
+        """重写原子读取，优化性能"""
+        t_f = self._query_temp('F')
+        t_d = self._query_temp('D')
+        self.temperatures = (t_f, t_d)
+        return self.temperatures
+
+    def read_powers(self):
+        """重写原子读取，优化性能"""
+        p_a = self._query_power('A')
+        p_b = self._query_power('B')
+        self.powers = (p_a, p_b)
+        return self.powers
+
+'''
 
 class KelvinionController:
     def __init__(self, resource, pidramp_config):
@@ -52,11 +238,6 @@ class KelvinionController:
 
     #--------------------------------------------------
     # 设置/读取仪器参数：设置用set，读取用read
-
-    def set_enable(self, loop: str = 'A', enable: bool = True):
-        state = 'HIGH' if enable else 'OFF'
-        self._safe_write(f"[SET:RANGE:{loop}:{state}]")
-        print(f"[Kelvinion] Set loop {loop} enable: {state}")
 
     def set_sample_ramp(self, target: float, ramp_override: float = None):
         """
@@ -190,19 +371,15 @@ class KelvinionController:
     #--------------------------------------------------
     # 从缓存获取数据
     def get_sample_power(self):
-        '''从属性获取样品功率（LOOPA, powers第一个元素）'''
         return self.powers[0]
     
     def get_chamber_power(self):
-        '''从属性获得样品腔功率（LOOPB,powers第二个元素）'''
         return self.powers[1]
 
     def get_sample_temperature(self):
-        """从属性获取样品温度（F通道，temperature第一个元素）"""
         return self.temperatures[0]
     
     def get_chamber_temperature(self):
-        """从属性获取样品腔温度（D通道，temperature第二个元素）"""
         return self.temperatures[1]
     
     def _tolerance(self, target: float) -> float:
@@ -246,7 +423,7 @@ class KelvinionController:
                 print("[Kelvinion] wait_for_stable aborted by user (sleep phase).")
                 return
         print(f"[Kelvinion] Temperature stabilized for {loop}.")
-
+'''
 
 class Keithley6221:
     """

@@ -757,14 +757,14 @@ class AppController(QObject):
             target_b = kelvinion.read_set_temperature('B')
 
             view.update_progress(f"Applying sample ramp/PID for target {target_a:.2f} K...")
-            kelvinion.set_sample_ramp(target_a)
-            kelvinion.set_sample_pid(target_a)
-            kelvinion.set_sample_range(target_a)
+            kelvinion.set_ramp(target_a, loop='A')
+            kelvinion.set_pid(target_a, loop='A')
+            kelvinion.set_range(target_a, loop='A')
 
             view.update_progress(f"Applying chamber ramp/PID for target {target_b:.2f} K...")
-            kelvinion.set_chamber_ramp(target_b)
-            kelvinion.set_chamber_pid(target_b)
-            kelvinion.set_chamber_range(target_b)
+            kelvinion.set_ramp(target_b, loop='B')
+            kelvinion.set_pid(target_b, loop='B')
+            kelvinion.set_range(target_b, loop='B')
 
             QMessageBox.information(view, "Apply PIDRAMP", "PIDRAMP parameters applied to device.")
         except Exception as e:
