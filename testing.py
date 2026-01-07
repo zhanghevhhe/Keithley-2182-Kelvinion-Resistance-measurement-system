@@ -29,8 +29,8 @@ if __name__ == "__main__":
 
     # kelvinion = KelvinionController(rm.open_resource(devices["kelvinion"]))
 
-    # kelvinion.set_temperature(291,'A')
-    # kelvinion.set_enable('A',False)
+    # kelvinion.set_temperature(291,'sample')
+    # kelvinion.set_enable('sample',False)
 
     pins=[1, 2, 3, 4]  # 示例引脚
     matrix.connect(pins)
@@ -45,10 +45,10 @@ if __name__ == "__main__":
     '''
     temp_points = [300, 290, 280, 270]
     for T in temp_points:
-        kelvinion.set_temperature(T,'A')
-        kelvinion.set_temperature(T,'B')
+        kelvinion.set_temperature(T,'sample')
+        kelvinion.set_temperature(T,'chamber')
         kelvinion.wait_for_stable(T)
-        print(f"[Kelvinion] Temperature stabilized for A at {kelvinion.get_temperature('F'):.2f} K")
+        print(f"[Kelvinion] Temperature stabilized for sample at {kelvinion.get_temperature('F'):.2f} K")
 
     '''
     '''
@@ -63,12 +63,12 @@ if __name__ == "__main__":
         writer.writerow(header)
 
         for T in temp_points:
-            kelvinion.set_temperature(T,'A')
-            kelvinion.set_temperature(T,'B')
+            kelvinion.set_temperature(T,'sample')
+            kelvinion.set_temperature(T,'chamber')
             kelvinion.wait_for_stable(T)
 
             # 获取实际样品温度
-            samp_temp = kelvinion.get_sample_temperature('A')
+            samp_temp = kelvinion.get_sample_temperature('sample')
             row = [datetime.now().strftime("%Y/%-m/%-d %-H:%M:%S"), f"{samp_temp:.6e}"]
 
             for name, cfg in channels.items():

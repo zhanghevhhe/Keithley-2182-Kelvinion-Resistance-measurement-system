@@ -157,9 +157,10 @@ class MainWindow(QMainWindow):
         self.error_display.setVisible(False)  # 默认隐藏
         # 清除按钮（仅在有消息时显示）
         self.clear_error_btn = QToolButton()
-        self.clear_error_btn.setText("Clear")
+        self.clear_error_btn.setText("X")
         self.clear_error_btn.setToolTip("Clear messages")
-        self.clear_error_btn.setFixedWidth(60)
+        self.clear_error_btn.setFixedWidth(40)
+        self.clear_error_btn.setFixedHeight(40)
         self.clear_error_btn.setVisible(False)
         error_layout.addWidget(self.error_display)
         error_layout.addWidget(self.clear_error_btn)

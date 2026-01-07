@@ -78,7 +78,7 @@ class MeasurementWorker(QObject):
         if not self._is_running:
             return
         try:
-            temp = self.msys.kelvinion.get_sample_temperature()
+            temp = self.msys.tempcontroller.get_sample_temperature()
         except Exception:
             temp = temp_point
         # Use the correctly named signal
@@ -225,11 +225,11 @@ class MeasurementWorker(QObject):
                 self.update_set_temp.emit(temp_point)
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Setting temperature to {temp_point:.2f} K...")
 
-                self.msys.kelvinion.set_temperature(temp_point, 'A', ramp_override=block.get('ramp', None))
-                self.msys.kelvinion.set_temperature(lowerT(temp_point), 'B')
+                self.msys.tempcontroller.set_temperature(temp_point, 'sample', ramp_override=block.get('ramp', None))
+                self.msys.tempcontroller.set_temperature(lowerT(temp_point), 'chamber')
 
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Waiting for temperature to stabilize at {temp_point:.2f} K...")
-                self.msys.kelvinion.wait_for_stable(temp_point, is_running_checker=lambda: self._is_running)
+                self.msys.tempcontroller.wait_for_stable(temp_point, is_running_checker=lambda: self._is_running)
 
                 if not self._is_running:
                     break
@@ -739,32 +739,32 @@ class AppController(QObject):
         """
         model = getattr(self, "model", None)
         try :
-            kelvinion = getattr(model, "kelvinion", None)
-            kelvinion.set_temperature(temp, loop='A', ramp_override=ramp_override)
-            kelvinion.set_temperature(lowerT(temp), loop='B', ramp_override=None)
+            tempcontroller = getattr(model, "tempcontroller", None)
+            tempcontroller.set_temperature(temp, loop='sample', ramp_override=ramp_override)
+            tempcontroller.set_temperature(lowerT(temp), loop='chamber', ramp_override=None)
         except Exception as e:
             QMessageBox.critical(self.view, "Set Temperature Error", f"Failed to set temperature: {e}")
 
     def apply_pidramp_to_hardware(self):
-        """将当前 model.pidramp 应用到已连接的 Kelvinion 仪器（设置 ramp 与 PID）。"""
+        """将当前 model.pidramp 应用到已连接的 温控仪器（设置 ramp 与 PID）。"""
         model = getattr(self, 'model', None)
         view = getattr(self, 'view', None)
         # 应用 ramp 和 PID
         try:
-            kelvinion = getattr(model, 'kelvinion', None)
+            tempcontroller = getattr(model, 'tempcontroller', None)
 
-            target_a = kelvinion.read_set_temperature()
-            target_b = kelvinion.read_set_temperature('B')
+            target_a = tempcontroller.read_set_temperature()
+            target_b = tempcontroller.read_set_temperature('chamber')
 
             view.update_progress(f"Applying sample ramp/PID for target {target_a:.2f} K...")
-            kelvinion.set_ramp(target_a, loop='A')
-            kelvinion.set_pid(target_a, loop='A')
-            kelvinion.set_range(target_a, loop='A')
+            tempcontroller.set_ramp(target_a, loop='sample')
+            tempcontroller.set_pid(target_a, loop='sample')
+            tempcontroller.set_range(target_a, loop='sample')
 
             view.update_progress(f"Applying chamber ramp/PID for target {target_b:.2f} K...")
-            kelvinion.set_ramp(target_b, loop='B')
-            kelvinion.set_pid(target_b, loop='B')
-            kelvinion.set_range(target_b, loop='B')
+            tempcontroller.set_ramp(target_b, loop='chamber')
+            tempcontroller.set_pid(target_b, loop='chamber')
+            tempcontroller.set_range(target_b, loop='chamber')
 
             QMessageBox.information(view, "Apply PIDRAMP", "PIDRAMP parameters applied to device.")
         except Exception as e:
