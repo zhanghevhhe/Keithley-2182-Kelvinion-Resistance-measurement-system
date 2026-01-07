@@ -112,6 +112,9 @@ class MainWindow(QMainWindow):
         self.load_pid_btn.clicked.connect(self.controller.load_pidramp_file)
         self.apply_pid_btn.clicked.connect(self.controller.apply_pidramp_to_hardware)
 
+        # 清除错误信息按钮
+        self.clear_error_btn.clicked.connect(self.clear_error)
+
         self.set_temp_edit.mousePressEvent = self._on_set_temp_edit_clicked
 
     def _create_left_panel(self):
@@ -144,11 +147,23 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.status_display)
         
         # --- 错误信息显示区域 ---
+        error_widget = QWidget()
+        error_layout = QHBoxLayout(error_widget)
+        error_layout.setContentsMargins(0, 0, 0, 0)
+        error_layout.setSpacing(6)
         self.error_display = QLineEdit("")
         self.error_display.setReadOnly(True)
         self.error_display.setStyleSheet("background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 4px; color: #721c24;")
         self.error_display.setVisible(False)  # 默认隐藏
-        layout.addWidget(self.error_display)
+        # 清除按钮（仅在有消息时显示）
+        self.clear_error_btn = QToolButton()
+        self.clear_error_btn.setText("Clear")
+        self.clear_error_btn.setToolTip("Clear messages")
+        self.clear_error_btn.setFixedWidth(60)
+        self.clear_error_btn.setVisible(False)
+        error_layout.addWidget(self.error_display)
+        error_layout.addWidget(self.clear_error_btn)
+        layout.addWidget(error_widget)
 
         # --- 手动控制按钮面板 ---
         btn_layout = QHBoxLayout()
@@ -582,6 +597,11 @@ class MainWindow(QMainWindow):
         """
         self.error_display.setText(f"ERROR: {error_message}")
         self.error_display.setVisible(True)
+        # 显示清除按钮
+        try:
+            self.clear_error_btn.setVisible(True)
+        except Exception:
+            pass
         # 设置错误样式
         self.error_display.setStyleSheet("background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 4px; color: #721c24;")
     
@@ -589,6 +609,10 @@ class MainWindow(QMainWindow):
         """清除错误信息显示"""
         self.error_display.setVisible(False)
         self.error_display.setText("")
+        try:
+            self.clear_error_btn.setVisible(False)
+        except Exception:
+            pass
     
     def show_warning(self, warning_message):
         """
@@ -599,6 +623,11 @@ class MainWindow(QMainWindow):
         """
         self.error_display.setText(f"WARNING: {warning_message}")
         self.error_display.setVisible(True)
+        # 显示清除按钮
+        try:
+            self.clear_error_btn.setVisible(True)
+        except Exception:
+            pass
         # 设置警告样式
         self.error_display.setStyleSheet("background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; padding: 4px; color: #856404;")
 
