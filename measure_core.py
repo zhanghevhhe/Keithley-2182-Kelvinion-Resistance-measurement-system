@@ -204,19 +204,15 @@ class KelvinionController(TempController):
 
     def read_temperatures(self):
         """重写原子读取，优化性能"""
-        sample_channel_name = self.channel_map.get('sample_temp_channel')
-        chamber_channel_name = self.channel_map.get('chamber_temp_channel')
-        sample_temp = self._query_temp(sample_channel_name)
-        chamber_temp = self._query_temp(chamber_channel_name)
+        sample_temp = self._query_temp('sample')
+        chamber_temp = self._query_temp('chamber')
         self.temperatures = (sample_temp, chamber_temp)
         return self.temperatures
 
     def read_powers(self):
         """重写原子读取，优化性能"""
-        pa_loop = self.channel_map['sample_loop']
-        pb_loop = self.channel_map['chamber_loop']
-        p_a = self._query_power(pa_loop)
-        p_b = self._query_power(pb_loop)
+        p_a = self._query_power('sample')
+        p_b = self._query_power('chamber')
         self.powers = (p_a, p_b)
         return self.powers
 
@@ -591,9 +587,9 @@ class MeasurementSystem(QObject):
             self.rm = pyvisa.ResourceManager()
 
             # 初始化各个仪器实例
-            self.tempcontroller = KelvinionController(self.rm.open_resource(self.devices["kelvinion"]), self.pidramp, self.channel_map)
+            self.tempcontroller = KelvinionController(self.rm.open_resource(self.devices["kelvinion"]), self.pidramp)
             # 若需要使用 Model24CController，只需取消下面一行注释并注释上面一行
-            # self.tempcontroller = Model24CController(self.rm.open_resource(self.devices["kelvinion"]), self.pidramp, self.channel_map)
+            # self.tempcontroller = Model24CController(self.rm.open_resource(self.devices["kelvinion"]), self.pidramp)"
             self.k6221 = Keithley6221(self.rm.open_resource(self.devices["k6221"]))
             self.matrix = SwitchMatrix3706(self.rm.open_resource(self.devices["matrix"]))
 
@@ -659,7 +655,11 @@ class MeasurementSystem(QObject):
             error_msg = f"Failed to read temperatures from tempcontroller: {e}"
             print(f"[Temperature Update] {error_msg}")
             self._safe_emit(self.error_occurred, error_msg)
-            self.tempcontroller.temperatures = 0.0, 0.0
+            if hasattr(self, 'tempcontroller') and self.tempcontroller is not None:
+                self.tempcontroller.temperatures = (0.0, 0.0)
+            else:
+                # 创建轻量回退对象以供显示逻辑使用，避免 AttributeError
+                self.tempcontroller = type('Dummy', (), {'temperatures': (0.0, 0.0), 'powers': (0.0, 0.0)})()
 
     def _update_display_temperatures_powers(self):
         # 发送温度信号

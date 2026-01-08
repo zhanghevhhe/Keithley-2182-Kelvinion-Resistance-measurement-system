@@ -6,3 +6,4 @@ config/PIDRAMP.json
 *.pyc
 config/channels.json
 *.json
+config/channels.json
