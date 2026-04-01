@@ -14,9 +14,12 @@ from PyQt5.QtCore import QObject, pyqtSignal, QThread
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QDialog
 
 
-def lowerT(temp_a):
+def lowerT(temp_a, cooldown = True):
     """根据回路 A 的温度计算回路 B 的目标温度（降低约10K，但不低于2K）。"""
-    lowered = temp_a - 20
+    if cooldown:
+        lowered = temp_a - 20
+    else:
+        lowered = temp_a - 3
     return lowered if lowered > 1 else 1
 
 
@@ -56,6 +59,7 @@ class MeasurementWorker(QObject):
         Measures all enabled channels, emits new_data signal, and handles all data processing.
         """
         results = {}
+        temps = np.array([])
         for ch_name, pins, current_val, vrange in snapshot:
             if not self._is_running:
                 break
@@ -67,22 +71,29 @@ class MeasurementWorker(QObject):
             }
             try:
                 res = self.msys.measure_single_channel(ch_name, channel_config)
+                try:
+                    temps =  np.append(temps, self.msys.tempcontroller.get_sample_temperature())
+                except Exception as e:
+                    temps = np.append(temps, temp_point)
+                    print(f"[Controller] Temperature error for {ch_name}: {e}")
             except Exception as e:
                 print(f"[Controller] Measurement error for {ch_name}: {e}")
                 res = float('nan')
             results[ch_name] = res
             # conservative delay between channels
-            time.sleep(0.6)
-        
+            time.sleep(0.3)
+                    
         # Emit data signal directly within the handler (use actual measured sample temp)
         if not self._is_running:
             return
         try:
-            temp = self.msys.tempcontroller.get_sample_temperature()
+            temps =  np.append(temps, self.msys.tempcontroller.get_sample_temperature())
         except Exception:
-            temp = temp_point
+            temps = np.append(temps, temp_point)
         # Use the correctly named signal
         try:
+            temp = temps.mean() if len(temps) > 0 else temp_point
+            print(f'[Data] temps: {temps}, temp_mean: {temp}, setpoint: {temp_point}')          
             self.new_resistance.emit(temp, results)
         except Exception:
             pass
@@ -98,7 +109,6 @@ class MeasurementWorker(QObject):
             chosen = 'CH1'
         
         pins = snapshot[[ch for ch, _, _, _ in snapshot].index(chosen)][1]
-        print(pins)
         
         # 如果 snapshot 中没有所选通道，则说明该通道未启用，直接跳过
         if not any(ch == chosen for ch, _, _, _ in snapshot):
@@ -184,9 +194,9 @@ class MeasurementWorker(QObject):
         self.total_steps.emit(total_steps)
         step = 0
 
-        print("--- Target Temperature Sequence ---")
-        print(target_temps)        
-        print("---------------------------------")
+        # print("--- Target Temperature Sequence ---")
+        # print(target_temps)        
+        # print("---------------------------------")
 
         # select operation handler once to keep branching localized
         if getattr(self, 'operation', 'Resistance') == 'SweepIV':
@@ -210,9 +220,11 @@ class MeasurementWorker(QObject):
             
             temp_points_in_block = self._linear_generate(start_temp, stop_temp, step_temp)
 
+
             if not temp_points_in_block:
                 self.progress.emit(f"Block {i+1}: Invalid parameters or empty sequence. Skipping.")
                 continue
+            
 
             for temp_point in temp_points_in_block:
                 if not self._is_running:
@@ -226,7 +238,10 @@ class MeasurementWorker(QObject):
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Setting temperature to {temp_point:.2f} K...")
 
                 self.msys.tempcontroller.set_temperature(temp_point, 'sample', ramp_override=block.get('ramp', None))
-                self.msys.tempcontroller.set_temperature(lowerT(temp_point), 'chamber')
+                
+
+                cooldown = stop_temp < start_temp
+                self.msys.tempcontroller.set_temperature(lowerT(temp_point, cooldown), 'chamber')
 
                 self.progress.emit(f"Block {i+1}/{len(self.sequence)}: Waiting for temperature to stabilize at {temp_point:.2f} K...")
                 self.msys.tempcontroller.wait_for_stable(temp_point, is_running_checker=lambda: self._is_running)
@@ -513,11 +528,15 @@ class AppController(QObject):
                     pass
 
         try:
+            self._write_resistance_to_file(temp, resistances)
+        except Exception as e:
+            print(f"[Controller] write_resistance_to_file error: {e}")
+
+        try:
             self.view.handle_new_data(temp, resistances)
-            self.view.update_plot_titles() 
+            self.view.update_plot_titles()
         except Exception as e:
             print(f"[Controller] handle_new_resistance error: {e}")
-        self._write_resistance_to_file(temp, resistances)
 
     def _write_resistance_to_file(self, temp, resistances):
         """将一行电阻测量数据写入主 CSV 文件"""
@@ -644,7 +663,18 @@ class AppController(QObject):
                 header = ["Timestamp", "Temperature[K]"]
                 channel_names = sorted(self.model.channels.keys())
                 for ch_name in channel_names:
-                    header.append(f"Resistance_{ch_name}[Ohm]")
+                    # 在表头中直接包含每个通道的配置信息（ENABLED/PINS/CURRENT/VRANGE）
+                    ch_cfg = self.model.channels.get(ch_name, {})
+                    enabled = 'ON' if ch_cfg.get('enabled', False) else 'OFF'
+                    pins = ch_cfg.get('pins', []) or []
+                    pins_str = ' '.join(str(p) for p in pins)
+                    current = ch_cfg.get('current', '')
+                    try:
+                        current_str = f"{float(current):.6e}A" if current != '' else ''
+                    except Exception:
+                        current_str = str(current)
+                    vrange = ch_cfg.get('voltage_range', '')
+                    header.append(f"R_{ch_name}[Ohm] ({enabled}[{pins_str}]{current_str}{vrange})")
 
             elif operation == 'SweepIV':
                 header = ['Timestamp', 'Temperature[K]', 'Voltage[V]', 'Current[A]']
@@ -654,6 +684,8 @@ class AppController(QObject):
                 channel_names = sorted(self.model.channels.keys())
                 for ch_name in channel_names:
                     header.append(f"Resistance_{ch_name}[Ohm]")
+                for ch_name in channel_names:
+                    header.append(f"Config_{ch_name}")
 
             with open(file_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)

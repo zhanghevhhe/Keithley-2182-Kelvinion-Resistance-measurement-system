@@ -8,7 +8,10 @@ from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 from abc import ABC, abstractmethod
 
 # --- 严格遵循 main.py 的真实仪器控制类 ---
-
+def stat_print(name, message):
+    if name is None:
+        name = "System"
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}][{name}] {message}")
 
 def interruptible_sleep(total_sec, is_running_checker=None, interval=0.2):
     elapsed = 0
@@ -94,7 +97,7 @@ class TempController(ABC):
         self.set_ramp(target, loop, ramp_override)
         self.set_pid(target, loop)
         self.set_range(target, loop)
-        print(f"[{self.__class__.__name__}] Loop {loop} configured for {target} K")
+        stat_print(self.__class__.__name__, f"Loop {loop} configured for {target} K")
 
     def _tolerance(self, target: float) -> float:
         for entry in self.pidramp["tolerance_ranges"]:
@@ -104,39 +107,45 @@ class TempController(ABC):
     #--------------------------------------------------
     # 其他功能语句
 
-    def wait_for_stable(self, target: float, loop: str = 'sample', is_running_checker=None):
+    def wait_for_stable(self, target: float, loop: str = 'sample', is_running_checker=None, check_times: int = 5, check_time_interval: float = 1.5):
+
         tol = self._tolerance(target)
-        print(f"[TempCon] Waiting for temperature to reach {target:.2f} K (±{tol} K)...")
+        stat_print(self.__class__.__name__, f"Waiting for temperature to reach {target:.2f} K (±{tol} K)...")
         while True:
             if is_running_checker and not is_running_checker():
-                print("[TempCon] wait_for_stable aborted by user.")
+                stat_print(self.__class__.__name__, "wait_for_stable aborted by user.")
                 return
-            interruptible_sleep(0.8)
+            interruptible_sleep(0.5)
             # 从属性获取温度，避免交叉读写
             t = self.get_sample_temperature() if loop == 'sample' else self.get_chamber_temperature()
             if t - target < tol and target - t < tol:
-                print("[TempCon] Temperature entered tolerance range...")
+                stat_print(self.__class__.__name__, "Temperature entered tolerance range...")
                 break
             if not interruptible_sleep(1, is_running_checker):
-                print("[TempCon] wait_for_stable aborted by user (sleep phase).")
+                stat_print(self.__class__.__name__, "wait_for_stable aborted by user (sleep phase).")
                 return
         
         valid_count = 0
-        while valid_count < 6:
+        stat_print(self.__class__.__name__, f"Stability Check {valid_count+1}/{check_times}: {t:.3f} K")
+
+        while valid_count < check_times-1:
             if is_running_checker and not is_running_checker():
-                print("[TempCon] wait_for_stable aborted by user.")
+                stat_print(self.__class__.__name__, "wait_for_stable aborted by user.")
                 return
-            interruptible_sleep(0.8)
+            interruptible_sleep(check_time_interval)
             t = self.get_sample_temperature() if loop == 'sample' else self.get_chamber_temperature()
-            print(f"[TempCon] Stability Check {valid_count+1}/6: {t:.3f} K")
+            
             if t - target < tol and target - t < tol:
+
                 valid_count += 1
+                stat_print(self.__class__.__name__, f"Stability Check {valid_count+1}/{check_times}: {t:.3f} K")
+
             else:
                 valid_count = 0
             if not interruptible_sleep(1, is_running_checker):
-                print("[TempCon] wait_for_stable aborted by user (sleep phase).")
+                stat_print(self.__class__.__name__, f"wait_for_stable aborted by user (sleep phase).")
                 return
-        print(f"[TempCon] Temperature stabilized for {loop}.")
+        stat_print(self.__class__.__name__, f"Temperature stabilized for {loop}.")
 
     def get_sample_power(self): return self.powers[0]
     def get_chamber_power(self): return self.powers[1]
@@ -277,7 +286,7 @@ class Keithley6221:
         self.inst = resource
         # 初始化仪器状态
         self.reset()
-        print("[System] Initialized Keithley 6221 + 2182 system")
+        stat_print("K6221", "Initialized Keithley 6221 + 2182 system")
 
     def reset(self):
         """复位仪器并清除状态寄存器"""
@@ -311,7 +320,7 @@ class Keithley6221:
         self._send_2182(f"VOLT:CHAN1:DFIL:WIND {window}")
         self._send_2182(f"VOLT:CHAN1:DFIL:TCON {filter_type}")
         self._send_2182("VOLT:CHAN1:DFIL:STAT ON")     # 开启数字滤波
-        print(f"[2182] Filter configured: Count={count}, Window={window}")
+        stat_print("2182", f"Filter configured: Count={count}, Window={window}")
 
     def get_reading(self, mode='FETCH'):
         """
@@ -341,7 +350,7 @@ class Keithley6221:
             # 数据格式通常是 "数值, 状态, ...", 我们只取第一个
             return float(raw_data.split(',')[0])
         except Exception as e:
-            print(f"Error reading data using command '{cmd}': {e}")
+            stat_print("K6221", f"Error reading data using command '{cmd}': {e}")
             raise
 
     def measure_dc_current(self, current, compliance=25, nplc=5, delay_s=1.0):
@@ -386,13 +395,13 @@ class Keithley6221:
             self.inst.write('SYSTEM:COMMUNICATE:SERIAL:ENTER?')
             time.sleep(0.5)
             raw_data = self.inst.read()
-            print(f'raw data = {raw_data}')
+            # print(f'raw data = {raw_data}')
             voltage = float(raw_data.split(',')[0])
             
-            print(f"[DC - Reliable] Measurement complete. V={voltage:.6e} V")
+            # print(f"[DC - Reliable] Measurement complete. V={voltage:.6e} V")
             return voltage
         except Exception as e:
-            print(f"Error during DC measurement fetch: {e}")
+            stat_print("K6221", f"Error during DC measurement fetch: {e}")
             raise
         finally:
             # 单点测量完成后，关闭输出是安全惯例
@@ -439,7 +448,7 @@ class Keithley6221:
         self.inst.write('SOURCE:DELTA:COUNT INF') # 无限循环，直到我们手动停止
         
         # 启动 Delta
-        print("[Delta] Arming and initiating Delta mode...")
+        stat_print("K6221", "[Delta] Arming and initiating Delta mode...")
         
         # 优化点: 清空 2182 测量缓冲区，确保平均值基于本次测量
         self._send_2182('TRAC:CLE') 
@@ -458,7 +467,7 @@ class Keithley6221:
             self.inst.write('SOURCE:SWEEP:ABORT')
             self.inst.write('OUTPUT OFF')
             
-        print(f"[Delta] Result V: {voltage:.6e} V (Avg over {duration}s)")
+        stat_print("K6221", f"[Delta] Result V: {voltage:.6e} V (Avg over {duration}s)")
         return voltage
 
     def close(self):
@@ -477,14 +486,14 @@ class SwitchMatrix3706:
         self.inst = resource
         self.inst.write('reset()')
         self.inst.write('channel.open("allslots")')
-        print("[3706] Initialized")
+        stat_print("3706", "Initialized")
 
     def open_all(self):
         try:
             self.inst.write('channel.open("allslots")')
-            print("[3706] All channels opened (disconnected)")
+            stat_print("3706", "All channels opened (disconnected)")
         except Exception as e:
-            print(f"[3706] Error opening all channels: {e}")
+            stat_print("3706", f"Error opening all channels: {e}")
 
 
     def connect(self, pins):
@@ -496,12 +505,12 @@ class SwitchMatrix3706:
             cmds.append(chan_str)
 
         # DEBUG: 列出将要闭合的通道 id，便于排查映射问题
-        print(f"[3706] Connecting pins {pins} -> channels {cmds}")
+        stat_print("3706", f"Connecting pins {pins} -> channels {cmds}")
         for chan_str in cmds:
             try:
                 self.inst.write(f'channel.close("{chan_str}")')
             except Exception as e:
-                print(f"[3706] Error writing channel.close for {chan_str}: {e}")
+                stat_print("3706", f"Error writing channel.close for {chan_str}: {e}")
 
 
 class MeasurementSystem(QObject):
@@ -523,7 +532,7 @@ class MeasurementSystem(QObject):
                 name = getattr(signal, '__name__', str(signal))
             except Exception:
                 name = str(signal)
-            print(f"[MeasurementSystem] Failed to emit {name}: {e}")
+            stat_print("MeasurementSystem", f"Failed to emit {name}: {e}")
 
     def __init__(self):
         super().__init__()
@@ -553,7 +562,7 @@ class MeasurementSystem(QObject):
                 self.initialize_instruments()
             except Exception as e:
                 error_msg = f"Failed to initialize instruments: {e}"
-                print(error_msg)
+                stat_print("MeasurementSystem", error_msg)
                 self._safe_emit(self.error_occurred, error_msg)
             else:
                 break
@@ -570,6 +579,11 @@ class MeasurementSystem(QObject):
         self.temp_display_timer.timeout.connect(self._update_display_temperatures_powers)
         self.temp_display_timer.start(300)  # 每300 ms更新一次显示
 
+        self.heater_range_timer = QTimer()
+        self.heater_range_timer.timeout.connect(self._update_heater_range)
+        self.heater_range_timer.start(100000)  # 每100 s更新一次设置Range
+        
+
     def get_available_sources(self):
         """返回已成功初始化的可用仪器列表。"""
         sources = []
@@ -583,7 +597,7 @@ class MeasurementSystem(QObject):
 
     def initialize_instruments(self):
         try:
-            print("Initializing instruments...")
+            stat_print("MeasurementSystem", "Initializing instruments...")
             self.rm = pyvisa.ResourceManager()
 
             # 初始化各个仪器实例
@@ -593,10 +607,10 @@ class MeasurementSystem(QObject):
             self.k6221 = Keithley6221(self.rm.open_resource(self.devices["k6221"]))
             self.matrix = SwitchMatrix3706(self.rm.open_resource(self.devices["matrix"]))
 
-            print("All instruments initialized successfully.")
+            stat_print("MeasurementSystem", "All instruments initialized successfully.")
         except Exception as e:
             error_msg = f"Error initializing instruments: {e}"
-            print(error_msg)
+            stat_print("MeasurementSystem", error_msg)
             self._safe_emit(self.error_occurred, error_msg)
 
     def save_channels_config(self):
@@ -653,7 +667,7 @@ class MeasurementSystem(QObject):
             self.tempcontroller.powers = self.tempcontroller.read_powers()
         except Exception as e:
             error_msg = f"Failed to read temperatures from tempcontroller: {e}"
-            print(f"[Temperature Update] {error_msg}")
+            stat_print("MeasurementSystem", f"[Temperature Update] {error_msg}")
             self._safe_emit(self.error_occurred, error_msg)
             if hasattr(self, 'tempcontroller') and self.tempcontroller is not None:
                 self.tempcontroller.temperatures = (0.0, 0.0)
@@ -671,7 +685,7 @@ class MeasurementSystem(QObject):
             self._safe_emit(self.chamber_temp_changed, chamber_temp)
         except Exception as e:
             error_msg = f"Temperature display error: {e}"
-            print(f"[Temperature Update] {error_msg}")
+            stat_print("MeasurementSystem", f"[Temperature Update] {error_msg}")
             self._safe_emit(self.error_occurred, error_msg)
             self._safe_emit(self.sample_temp_changed, 0.0)
             self._safe_emit(self.chamber_temp_changed, 0.0)
@@ -683,9 +697,14 @@ class MeasurementSystem(QObject):
             self._safe_emit(self.chamber_power_changed, chamber_power)
         except Exception as e:
             error_msg = f"Power read error: {e}"
-            print(f"[Power Update] {error_msg}")
+            stat_print("MeasurementSystem", f"[Power Update] {error_msg}")
             self._safe_emit(self.sample_power_changed, 0.0)
             self._safe_emit(self.chamber_power_changed, 0.0)
+
+    def _update_heater_range(self):
+        self.tempcontroller.set_range(self.tempcontroller.read_set_temperature('sample'),'sample')
+        self.tempcontroller.set_range(self.tempcontroller.read_set_temperature('chamber'),'chamber')
+        # stat_print('MeasurementSystem', "Heater range updated.")
 
     def measure_single_channel(self, ch_name, channel_config):
         attempts = 3
@@ -696,7 +715,7 @@ class MeasurementSystem(QObject):
             pins = channel_config.get('pins', [])
 
             if not pins:
-                print(f"Warning: No pins configured for channel {ch_name}. Skipping.")
+                stat_print("MeasurementSystem", f"Warning: No pins configured for channel {ch_name}. Skipping.")
                 return float('nan')
 
             # 串行化整个测量过程，避免多个线程同时写入仪器导致超时
@@ -716,7 +735,7 @@ class MeasurementSystem(QObject):
                     except Exception as e:
                         last_exc = e
                         msg = str(e)
-                        print(f"[System] delta_measure attempt {attempt} failed for {ch_name}: {msg}")
+                        stat_print("MeasurementSystem", f"delta_measure attempt {attempt} failed for {ch_name}: {msg}")
                         # 在超时或通信错误时，尝试发送中止并稍后重试
                         self.k6221.close()
                         time.sleep(backoff * attempt)
@@ -731,19 +750,19 @@ class MeasurementSystem(QObject):
                 else:
                     resistance = voltage / current
 
-                print(f"[System] Measured R = {resistance:.6e} Ohm for channel {ch_name} (V={voltage:.6e}, I={current:.2e})")
+                stat_print("MeasurementSystem", f"Measured R = {resistance:.6e} Ohm for channel {ch_name} (V={voltage:.6e}, I={current:.2e})")
                 return resistance
 
         except Exception as e:
             error_msg = f"Measurement error on channel {ch_name}: {e}"
-            print(f"FATAL ERROR during measurement of channel {ch_name}: {e}")
+            stat_print("MeasurementSystem", f"FATAL ERROR during measurement of channel {ch_name}: {e}")
             self._safe_emit(self.error_occurred, error_msg)
             # 如果 delta_measure 中途出错，尝试中止扫描
             try:
                 self.k6221.close()
-                print("[K6221] Sent ABORT command due to error.")
+                stat_print("K6221", "Sent ABORT command due to error.")
             except Exception as abort_e:
-                print(f"Error sending ABORT command: {abort_e}")
+                stat_print("K6221", f"Error sending ABORT command: {abort_e}")
             return float('nan')
 
         finally:

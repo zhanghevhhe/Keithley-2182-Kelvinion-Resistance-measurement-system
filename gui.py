@@ -866,13 +866,22 @@ class MainWindow(QMainWindow):
 
     def handle_new_data(self, temp, resistances):
         """
-        处理新的测量数据并更新图表。
-        
+        处理新的测量数据并更新图表，优先从文件读取历史数据以保持与文件一致。
+
         Args:
             temp (float): 当前温度值
             resistances (dict): 各通道的电阻值字典
         """
-        # 先取出现有数据，再追加新点
+        # 优先从保存文件载入完整数据（文件可由外部编辑）
+        file_path = self.get_save_path().strip() if hasattr(self, 'get_save_path') else ''
+        if file_path and os.path.exists(file_path):
+            try:
+                self.update_plots_from_file(file_path)
+                return
+            except Exception as e:
+                print(f"[GUI] handle_new_data load file failed: {e}")
+
+        # 如果文件不可用，则回退到内存增量方式（兼容旧逻辑）
         data_by_ch = {ch: {'x': [], 'y': []} for ch in self.plot_items}
         for ch, plot_item in self.plot_items.items():
             data_items = plot_item.listDataItems()
